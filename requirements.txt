@@ -1,3 +1,0 @@
-improutils
-numpy
-opencv-contrib-python
