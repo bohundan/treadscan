@@ -22,8 +22,7 @@ copyright = '2022, Daniel Bohuněk'
 author = 'Daniel Bohuněk'
 
 # The full version, including alpha/beta/rc tags
-from importlib.metadata import version
-release = version('treadscan')
+release = '0.1.1'
 
 
 # -- General configuration ---------------------------------------------------
