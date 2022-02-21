@@ -1,4 +1,4 @@
 numpydoc
 Sphinx>=4.4.0
-sphinx-autoapi
 sphinx-rtd-theme>=1.0.0
+treadscan
