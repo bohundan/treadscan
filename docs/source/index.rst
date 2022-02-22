@@ -6,7 +6,7 @@
 Treadscan documentation
 =======================
 
-.. image:: _static/treadscan.png
+.. image:: _static/treadscan.jpg
 
 Required Python version: ``python3.6`` or higher.
 
