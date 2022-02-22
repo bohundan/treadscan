@@ -8,7 +8,7 @@ Treadscan documentation
 
 .. image:: _static/treadscan.jpg
 
-Required Python version: ``python3.6`` or higher.
+Required Python version: ``python3.8`` or higher.
 
 Required packages: ``numpy>=1.22.1``, ``opencv-contrib-python>=4.5.5.62``, ``improutils>=1.1.8``.
 
