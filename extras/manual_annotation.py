@@ -65,7 +65,7 @@ def parse_filename(parser: ArgumentParser, arg: str):
 
     Parameters
     ----------
-    parser : ArgumentParser
+    parser : argparseArgumentParser
 
     arg : str
         Filename to check.

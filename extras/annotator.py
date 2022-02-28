@@ -21,7 +21,7 @@ class Annotator:
 
     Attributes
     ----------
-    image : np.ndarray
+    image : numpy.ndarray
         Image being annotated.
 
     scale : float
@@ -104,7 +104,7 @@ class Annotator:
 
         Returns
         -------
-        Ellipse
+        treadscan.Ellipse
             Ellipse constructed from provided points.
         """
 
@@ -135,7 +135,7 @@ class Annotator:
 
         Parameters
         ----------
-        image : np.ndarray
+        image : numpy.ndarray
             Image over which to draw, should be in BGR.
 
         Returns
@@ -143,7 +143,7 @@ class Annotator:
         None
             If no ellipses can be constructed.
 
-        (Extractor, Ellipse, Ellipse, Ellipse, int, int, float, float)
+        (treadscan.Extractor, treadscan.Ellipse, treadscan.Ellipse, treadscan.Ellipse, int, int, float, float)
             Tuple of extractor, main ellipse, outer ellipse, inner ellipse, tire width, outer ellipse extend,
             start and end angles.
             When ellipses CAN be constructed from points annotated on image.
@@ -394,7 +394,7 @@ class Annotator:
         None
             If annotation was canceled.
 
-        (Ellipse, Ellipse, Ellipse, int, float, float, bool)
+        (treadscan.Ellipse, treadscan.Ellipse, treadscan.Ellipse, int, float, float, bool)
             Tuple of main ellipse, outer and inner bounding ellipses, tread width, start and end extraction angle and
             boolean whether image is flipped (mirrored).
         """

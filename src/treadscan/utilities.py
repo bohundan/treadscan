@@ -3,6 +3,7 @@ This module contains various useful methods that can be used in multiple differe
 """
 
 from math import sin, cos, radians
+from os.path import isfile
 
 import cv2
 import numpy as np
@@ -71,6 +72,13 @@ class Ellipse:
         self.height = int(height)
         self.angle = angle
 
+    def __str__(self):
+        """
+        Returns string describing ellipse.
+        """
+
+        return f'Center: {self.cx}, {self.cy}\nAngle: {self.angle}\nHeight: {self.height}\nWidth: {self.width}'
+
     def get_center(self) -> (int, int):
         """
         Returns center coordinates as tuple.
@@ -130,13 +138,41 @@ class Ellipse:
         return [(self.cx, self.cy), (self.width // 2, self.height // 2), self.angle, start, end]
 
 
+def load_image(path: str):
+    """
+    Load grayscale image from given path.
+
+    Parameters
+    ----------
+    path : str
+        Path to image.
+
+    Returns
+    -------
+    numpy.ndarray
+        Grayscale image as 2D array.
+
+    Raises
+    ------
+    ValueError
+        When file does not exist or is not readable.
+    """
+
+    if isfile(path):
+        image = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+    else:
+        raise ValueError('File does not exists or is not readable.')
+
+    return image
+
+
 def scale_image(image: np.ndarray, factor: float, interpolation_method: int = None) -> np.ndarray:
     """
     Scale image by factor. Returns new instance of rescaled image.
 
     Parameters
     ----------
-    image : np.ndarray
+    image : numpy.ndarray
         Image to scale by factor.
 
     factor : float
@@ -159,7 +195,7 @@ def scale_image(image: np.ndarray, factor: float, interpolation_method: int = No
 
     Returns
     -------
-    np.ndarray
+    numpy.ndarray
         Scaled image.
     """
 
@@ -180,7 +216,7 @@ def subsample_hash(array: np.ndarray, sample_size: int = 1024, seed: int = 666) 
 
     Parameters
     ----------
-    array : np.ndarray
+    array : numpy.ndarray
         NumPy array for which to compute hash.
 
     sample_size : int
@@ -217,7 +253,7 @@ def image_histogram(image: np.ndarray) -> np.ndarray:
 
     Parameters
     ----------
-    image : np.ndarray
+    image : numpy.ndarray
         Input image (grayscale, 2D array).
 
     Raises
@@ -227,7 +263,7 @@ def image_histogram(image: np.ndarray) -> np.ndarray:
 
     Returns
     -------
-    np.ndarray
+    numpy.ndarray
         Normalized histogram (sum equals 1).
     """
 

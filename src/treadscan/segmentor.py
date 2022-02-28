@@ -24,7 +24,7 @@ class Segmentor:
 
     Attributes
     ----------
-    image : np.ndarray
+    image : numpy.ndarray
         Grayscale image on which to perform processing operations.
 
     Methods
@@ -32,7 +32,7 @@ class Segmentor:
     to_binary(threshold: int)
         Uses thresholding to create a binary image.
 
-    filter_contours(binary_image: np.ndarray, min_area: int)
+    filter_contours(binary_image: numpy.ndarray, min_area: int)
         Removes small and wide contours from binary image.
 
     find_ellipse(threshold: int, min_area: int)
@@ -43,7 +43,7 @@ class Segmentor:
         """
         Parameters
         ----------
-        image : np.ndarray
+        image : numpy.ndarray
             Grayscale image on which processing operations will be performed.
 
         Raises
@@ -69,6 +69,11 @@ class Segmentor:
         threshold : int
             Pixels higher than threshold will turn white, pixels smaller than threshold will turn black.
 
+        Returns
+        -------
+        numpy.ndarray
+            Binary image, original image is preprocessed before thresholding.
+
         Raises
         ------
         ValueError
@@ -82,6 +87,7 @@ class Segmentor:
 
         h, w = self.image.shape
 
+        # Kernel with odd size
         kernel_size = h // 100 - (1 if (h // 100) % 2 == 0 else 0)
         kernel_size = max(3, kernel_size)
 
@@ -114,7 +120,7 @@ class Segmentor:
 
         Parameters
         ----------
-        binary_image : np.ndarray.
+        binary_image : numpy.ndarray.
 
         min_area : int
             Minimum contour size (area), any smaller contours will be removed.
@@ -123,7 +129,7 @@ class Segmentor:
 
         Returns
         -------
-        list of np.ndarray
+        list of numpy.ndarray
             List of filtered contours.
         """
 
@@ -149,12 +155,12 @@ class Segmentor:
 
         Parameters
         ----------
-        contour : np.ndarray
+        contour : numpy.ndarray
             Contour to which fit an ellipse to.
 
         Returns
         -------
-        (Ellipse, float)
+        (treadscan.Ellipse, float)
             Ellipse is defined by center coordinates, size and rotation.
 
             Second value is the error (sum of squares, the smaller, the better).
@@ -186,11 +192,11 @@ class Segmentor:
         min_area : int
             Minimum area of ellipse (ellipse contour area).
 
-            0 for automatic (image width * height / 100).
+            0 for automatic (image width * height // 100).
 
         Returns
         -------
-        Ellipse
+        treadscan.Ellipse
             Ellipse defined by center coordinates, size and rotation (in degrees).
 
         None

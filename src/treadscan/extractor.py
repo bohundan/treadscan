@@ -6,6 +6,7 @@ extract (unwrap) the tire tread as a separate image. First it corrects the rotat
 transformations, it creates bounding ellipses around the car tire. Tread unwrapping is then done by "walking" along
 and between the two ellipses.
 """
+
 from enum import Enum
 from math import sqrt, sin, cos, asin, radians, degrees, ceil, floor, acos
 import multiprocessing
@@ -62,10 +63,10 @@ class Extractor:
 
     Attributes
     ----------
-    image : np.ndarray
+    image : numpy.ndarray
         Image from which to extract tread.
 
-    ellipse : Ellipse
+    ellipse : treadscan.Ellipse
         Ellipse defined by center, size and rotation, which describes car's tire (wheel/rim) position in image.
 
     Methods
@@ -85,10 +86,10 @@ class Extractor:
         """
         Parameters
         ----------
-        image : np.ndarray
+        image : numpy.ndarray
             Original image from which to extract tire tread.
 
-        ellipse : Ellipse
+        ellipse : treadscan.Ellipse
             Ellipse defined by center, size and rotation, which describes car's tire (wheel/rim) position in image.
         """
 
@@ -216,8 +217,8 @@ class Extractor:
 
         return x_, y_
 
-    def get_tire_bounding_ellipses(self, tire_width: int = 0, tire_sidewall: int = 0,
-                                   outer_extend: int = 0) -> (Ellipse, Ellipse):
+    def get_tire_bounding_ellipses(self, tire_width: int = 0, tire_sidewall: int = 0, outer_extend: int = 0) \
+            -> (Ellipse, Ellipse):
         """
         Create and return outer and inner ellipses surrounding car tire.
 
@@ -239,7 +240,7 @@ class Extractor:
 
         Returns
         -------
-        (Ellipse, Ellipse)
+        (treadscan.Ellipse, treadscan.Ellipse)
             Tuple of outer and inner ellipses, each defined by center, height and width.
         """
 
@@ -253,16 +254,15 @@ class Extractor:
         ratio = np.clip(self.main_ellipse.width / self.main_ellipse.height, -1, 1)
         alpha = degrees(acos(ratio))
         beta = 90 - alpha
-        # Example: 205/55 R 16, width is about half the wheel diameter, sidewall about half the tire width
-        #          205 mm width
-        #          205 mm * 0.55 = 113 mm sidewall
+        # Example: 205/55 R 16, width is about half the wheel diameter, sidewall about quarter the wheel diameter
+        #          205 mm tire width
+        #          205 mm * 0.55 = 113 mm tire sidewall
         #          16inch = 406 mm wheel diameter
-        # Obviously low-profile tires have smaller sidewalls, but they are less common
         if tire_width == 0:
-            # Overestimate on purpose (to avoid cropping tire tread)
+            # Overestimate by 10% on purpose (to avoid cropping tire tread)
             tire_width = int(self.main_ellipse.height / 1.8)
         if tire_sidewall == 0:
-            tire_sidewall = tire_width // 2
+            tire_sidewall = int(self.main_ellipse.height / 3.6)
 
         # Extend main ellipse to match tire perimeter
         height2 = self.main_ellipse.height + tire_sidewall * 2
@@ -277,7 +277,7 @@ class Extractor:
 
             Parameters
             ----------
-            ellipse : Ellipse
+            ellipse : treadscan.Ellipse
                 Ellipse which to transform.
 
             shift_by : int
@@ -286,7 +286,7 @@ class Extractor:
 
             Returns
             -------
-            Ellipse
+            treadscan.Ellipse
                 New ellipse moved across the (rotated) X axis.
             """
 
@@ -367,7 +367,7 @@ class Extractor:
 
         Returns
         -------
-        np.ndarray
+        numpy.ndarray
             New image with extracted tread. If original image has 1 channel (grayscale), output of this function is
             also a grayscale image. If original has more channels (BGR, RGB, etc.), output is also in the same
             colorspace (BGR, RGB, etc.).
@@ -403,7 +403,7 @@ class Extractor:
                 raise ValueError('Invalid amount of ellipses provided. Must be 2 (outer and inner).')
             outer_ellipse, inner_ellipse = tire_bounding_ellipses
             if type(outer_ellipse) is not Ellipse or type(inner_ellipse) is not Ellipse:
-                raise ValueError('Ellipses are not an instance of treadscan.utilities.Ellipse.')
+                raise ValueError('Ellipses are not an instance of treadscan.Ellipse.')
             # Rotation is already accounted for
             outer_ellipse.angle = 0
             inner_ellipse.angle = 0
@@ -440,7 +440,7 @@ class Extractor:
 
             Returns
             -------
-            (int, np.ndarray)
+            (int, numpy.ndarray)
                 Tuple of index of part and degree range.
             """
 
@@ -499,12 +499,12 @@ def tire_tread_part(index: int, linspace: np.ndarray) -> (int, np.ndarray):
     index : int
         Index of part (to identify where part belongs).
 
-    linspace : np.ndarray
+    linspace : numpy.ndarray
         Range of degrees on bounding (outer and inner) ellipses, which is being unwrapped.
 
     Returns
     -------
-    (int, np.ndarray)
+    (int, numpy.ndarray)
         Index of tread part and unwrapped tread as image.
 
     Raises

@@ -80,7 +80,7 @@ def main(input_path: str, background_path: str, output_folder: str, flipped: boo
     else:
         position = CameraPosition.FRONT_RIGHT
 
-    gen = detector.detect_background_subtraction(input_path, input_type)
+    gen = detector.detect(input_path, input_type)
     while True:
         try:
             image = next(gen)
@@ -140,8 +140,8 @@ arg_parser.add_argument('-i', dest='input', required=True, help='path to video o
 arg_parser.add_argument('-o', dest='folder', required=False, help='folder in which to save scanned treads',
                         metavar='FOLDER', type=str, default='')
 arg_parser.add_argument('--flipped', dest='flipped', required=False,
-                        help='use this flag if tire tread is on the left side relative to visible wheel, refer to treadscan.extractor.CameraPosition',
-                        action='store_true')
+                        help='use this flag if tire tread is on the left side relative to visible wheel, refer to '
+                             'treadscan.CameraPosition', action='store_true')
 arg_parser.add_argument('--manual', dest='manual', required=False, help='manual mode', action='store_true')
 arg_parser.add_argument('--semiauto', dest='semiauto', required=False, help='semi automatic mode', action='store_true')
 arg_parser.add_argument('--auto', dest='auto', required=False, help='automatic mode', action='store_true')
