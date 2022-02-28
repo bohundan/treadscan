@@ -8,6 +8,12 @@ Ellipse
    :members:
 
 
+load_image()
+-------------
+
+.. autofunction:: treadscan.utilities.load_image
+
+
 scale_image()
 -------------
 
