@@ -111,6 +111,14 @@ class Detector:
         whether it is moving or not. Window opens when a car is detected as stopped and closes when car starts moving
         again. The generator then yields the best focused (least blurry) frame from this window.
 
+    set_params(background_sample: Union[np.ndarray, str, None], background_threshold: Union[float, None],
+               motion_threshold: Union[float, None], background_intensity_threshold: Union[int, None],
+               motion_intensity_threshold: Union[int, None]):
+       Sets detection parameters.
+
+    image_difference(image1: np.ndarray, image2: np.ndarray, intensity_threshold: int)
+        Calculate the difference between images as percentage.
+
     vehicle_present_in_image(image: numpy.ndarray)
         Determines whether vehicle is present in image or not.
 
@@ -122,6 +130,9 @@ class Detector:
 
     compare_image_focus(image1: numpy.ndarray, image2: numpy.ndarray)
         Compares *blurriness* of the two images, return the less blurry one.
+
+    get_full_detection_data(input_path: str, input_type: treadscan.InputType)
+        Generate datasets for analysis of detection parameters.
     """
 
     def __init__(self, background_sample: Union[np.ndarray, str]):
@@ -253,6 +264,11 @@ class Detector:
 
             The higher the framerate, the longer window is recommended.
 
+        Yields
+        ------
+        numpy.ndarray
+            One image per one stopped car from footage.
+
         Raises
         ------
         ValueError
@@ -262,12 +278,6 @@ class Detector:
             If failed to fetch first frame from footage.
 
             If input frames have different resolution than the background sample.
-
-        Yields
-        ------
-        numpy.ndarray
-            One image per one stopped car from footage.
-
         """
 
         if not 0 < scale <= 1:
@@ -398,6 +408,42 @@ class Detector:
                 raise ValueError('Motion intensity threshold out of range (must be between 0 and 255)')
             self.motion_intensity_threshold = motion_intensity_threshold
 
+    @staticmethod
+    def image_difference(image1: np.ndarray, image2: np.ndarray, intensity_threshold: int) -> float:
+        """
+        Calculate percentage of pixels that are mismatched (their difference is greater than intensity_threshold).
+
+        Parameters
+        ----------
+        image1 : np.ndarray
+
+        image2 : np.ndarray
+
+        intensity_threshold : int
+            Difference required for pixel to be evaluated as 'different'.
+
+        Returns
+        -------
+        float
+            In range between 0 and 1. Higher the number bigger the difference.
+
+        Raises
+        ------
+        ValueError
+            If image resolution is mismatched or images aren't grayscale.
+        """
+
+        if len(image1.shape) != 2 or len(image2.shape) != 2:
+            raise ValueError('One of the provided images is not grayscale.')
+        if image1.shape[0] != image2.shape[0] or image1.shape[1] != image2.shape[1]:
+            raise ValueError('Mismatched resolution of images.')
+
+        difference = abs(image1.astype(np.intc) - image2.astype(np.intc)).astype(np.uint8)
+        mask = np.greater(difference, intensity_threshold)
+        result = np.count_nonzero(mask) / (image1.shape[0] * image1.shape[1])
+
+        return result
+
     def vehicle_present_in_image(self, image: np.ndarray) -> bool:
         """
         Detect vehicle in image by subtracting background, thresholding and counting percent (mean) of remaining pixels.
@@ -421,12 +467,7 @@ class Detector:
             False when vehicle is not detected.
         """
 
-        # Subtract background
-        difference = abs(self._background_for_processing.astype(np.intc) - image.astype(np.intc))
-        # Where difference between image and background is more than some intensity threshold
-        mask = np.greater(difference, self.background_intensity_threshold)
-        # As percentage
-        result = np.count_nonzero(mask) / (image.shape[0] * image.shape[1])
+        result = self.image_difference(self._background_for_processing, image, self.background_intensity_threshold)
 
         return result > self.background_threshold
 
@@ -452,12 +493,7 @@ class Detector:
             False when there is NO movement.
         """
 
-        # Difference between images
-        difference = abs(image2.astype(np.intc) - image1.astype(np.intc)).astype(np.uint8)
-        # Where difference is greater than some intensity threshold
-        mask = np.greater(difference, self.motion_intensity_threshold)
-        # As percentage
-        result = np.count_nonzero(mask) / (image1.shape[0] * image1.shape[1])
+        result = self.image_difference(image2, image1, self.motion_intensity_threshold)
 
         return result > self.motion_threshold
 
@@ -533,6 +569,104 @@ class Detector:
             return image2
         else:
             return image1
+
+    def get_full_detection_data(self, input_path: str, input_type: InputType, scale: float = 0.25, window: int = 50) \
+            -> (list, list, list):
+        """
+        Create datasets from footage for analysis, visualisation or easier parameter selection (picking the perfect
+        thresholds for example).
+
+        Parameters
+        ----------
+        input_path : str
+            Path to video/stream or to folder containing images (sorted in sequence).
+
+        input_type : treadscan.InputType
+
+        scale : float
+            Rescales footage down (to speed up processing).
+
+        window : int
+            Number of frames that are also considered (starts with first frame where stopped car is detected).
+            Compensates for small movements and noise in footage that could otherwise cause one car to yield multiple
+            images.
+
+            The higher the framerate, the longer window is recommended.
+
+        Returns
+        -------
+        (list, list, list, list)
+            Tuple of four datasets, car presence, car motion, car blurriness and window status. All four contain
+            data-points for each frame of footage, so even the car blurriness dataset contains data of frames where
+            no car is present.
+
+        Raises
+        ------
+        ValueError
+            If path to video or folder doesn't exist or cannot be read.
+
+        RuntimeError
+            If failed to fetch first frame from footage.
+
+            If input frames have different resolution than the background sample.
+        """
+
+        car_presence = []
+        car_motion = []
+        car_blurriness = []
+        window_status = []
+
+        if not 0 < scale <= 1:
+            raise ValueError('Invalid scale factor (must be between 1 and 0).')
+
+        self._scale = scale
+        height, width = self.background_sample.shape
+        blur_kernel = self._calc_kernel_size(int(width * scale), int(height * scale))
+        self._background_for_processing = self._prep_image(self.background_sample, scale, blur_kernel)
+
+        frame_extractor = FrameExtractor(input_path, input_type)
+
+        # Acquire first frame
+        prev_frame = frame_extractor.next_frame()
+        if prev_frame is None:
+            raise RuntimeError('Failed fetching first frame from input.')
+        if prev_frame.shape != self.background_sample.shape:
+            raise RuntimeError('Footage and background sample have mismatched resolution.')
+        prev_frame = self._prep_image(prev_frame, scale, blur_kernel)
+
+        last_hit = window
+        frame = frame_extractor.next_frame()
+        while frame is not None:
+            # Process next frame
+            if frame.shape != self.background_sample.shape:
+                raise RuntimeError('Footage and background sample have mismatched resolution.')
+            curr_frame = self._prep_image(frame, scale, blur_kernel)
+
+            # Car presence is difference between frame and background sample
+            presence = self.image_difference(self._background_for_processing, curr_frame,
+                                             self.background_intensity_threshold)
+            # Car motion is difference between subsequent frames
+            motion = self.image_difference(prev_frame, curr_frame, self.motion_intensity_threshold)
+            # Car blurriness is variance of Laplacian operator over dark areas of frame
+            blurriness = self.cached_laplacian_var(curr_frame)
+
+            car_presence.append(presence)
+            car_motion.append(motion)
+            car_blurriness.append(blurriness)
+
+            # Car present and not moving
+            if presence > self.background_threshold and not motion > self.motion_threshold:
+                last_hit = 0
+            elif last_hit < window:
+                last_hit += 1
+
+            window_status.append(1 if last_hit < window else 0)
+
+            # Next frame
+            prev_frame = curr_frame
+            frame = frame_extractor.next_frame()
+
+        return car_presence, car_motion, car_blurriness, window_status
 
 
 class FrameExtractor:

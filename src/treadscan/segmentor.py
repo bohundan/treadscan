@@ -37,6 +37,9 @@ class Segmentor:
 
     find_ellipse(threshold: int, min_area: int)
         Finds and returns ellipse (car wheel/rim 'inside' tire).
+
+    label_contours(threshold: int, min_area: int)
+        Creates color image with labeled contours (contour area and score of fitted ellipse of each valid contour).
     """
 
     def __init__(self, image: np.ndarray):
@@ -227,3 +230,109 @@ class Segmentor:
                 best_ellipse = ellipse
 
         return best_ellipse
+
+    def label_contours(self, threshold: int = 135, min_area: int = 0) -> np.ndarray:
+        """
+        Label each contour with its aspect ratio, area size and valid contours with the ellipse score of corresponding
+        fitted ellipse. Labeled contours are stored in BGR image (3D numpy array).
+
+        Parameters
+        ----------
+        threshold : int
+            Thresholding threshold.
+
+        min_area : int
+            Minimum area of ellipse (ellipse contour area).
+
+            0 for automatic (image width * height // 100).
+
+        Returns
+        -------
+        numpy.ndarray
+            BGR image with labeled contours.
+
+            Red contour = too small.
+
+            Yellow contour = bad aspect ratio (height should be greater than width).
+
+            Green contour = valid contour with fitted ellipse. Smaller ellipse score means better fit.
+        """
+
+        binary_image = self.to_binary(threshold=threshold)
+
+        contours, _ = cv2.findContours(binary_image, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+
+        if min_area == 0:
+            h, w = binary_image.shape
+            min_area = w * h // 100
+
+        # Classify contours
+        small_contours = []
+        wide_contours = []
+        tall_contours = []
+        for contour in contours:
+            _, _, w, h = cv2.boundingRect(contour)
+            if cv2.contourArea(contour) <= min_area:
+                small_contours.append(contour)
+            elif w >= h:
+                wide_contours.append(contour)
+            else:
+                tall_contours.append(contour)
+
+        # Empty color image on which to draw contours
+        image = np.zeros(shape=(binary_image.shape[0], binary_image.shape[1], 3), dtype=np.uint8)
+        red = (0, 0, 255)
+        yellow = (0, 255, 255)
+        green = (0, 255, 0)
+        cyan = (255, 255, 0)
+
+        def put_text(text: str, location: (int, int), color: (int, int, int)):
+            """
+            Write outlined text on image.
+
+            Parameters
+            ----------
+            text : str
+                Text to write on image.
+
+            location : (int, int)
+                X and Y coordinates on image.
+
+            color : (int, int, int)
+                BGR color.
+            """
+
+            cv2.putText(image, text, location, cv2.FONT_HERSHEY_SIMPLEX, fontScale=1, color=(50, 50, 50), thickness=2,
+                        lineType=cv2.LINE_AA)
+            cv2.putText(image, text, location, cv2.FONT_HERSHEY_SIMPLEX, fontScale=1, color=color, thickness=1,
+                        lineType=cv2.LINE_AA)
+
+        # Label small contours with just area
+        for contour in small_contours:
+            x, y, _, _ = cv2.boundingRect(contour)
+            cv2.drawContours(image, [contour], 0, red, cv2.FILLED)
+            put_text(f'area: {int(cv2.contourArea(contour))}', (x, y), red)
+
+        # Label wide contours with area and aspect ratio
+        for contour in wide_contours:
+            x, y, w, h = cv2.boundingRect(contour)
+            cv2.drawContours(image, [contour], 0, yellow, cv2.FILLED)
+            put_text(f'area: {int(cv2.contourArea(contour))}', (x, y), yellow)
+            put_text(f'aspect ratio: {w / h:.1f}', (x, y + 30), yellow)
+
+        # Label tall contours with area, aspect ratio and fitted ellipse
+        for contour in tall_contours:
+            x, y, w, h = cv2.boundingRect(contour)
+            cv2.drawContours(image, [contour], 0, green, cv2.FILLED)
+            # Fit ellipse
+            ellipse, error = self.fit_ellipse(contour)
+            drawn_contour = improutils.crop_contour(contour, binary_image)
+            solidity = improutils.solidity(drawn_contour)
+            score = error * (1.1 - solidity)
+            # Draw ellipse and text
+            cv2.ellipse(image, *ellipse.cv2_ellipse(), color=cyan, thickness=5, lineType=cv2.LINE_AA)
+            put_text(f'area: {int(cv2.contourArea(contour))}', (x, y), green)
+            put_text(f'aspect ratio: {w / h:.1f}', (x, y + 30), green)
+            put_text(f'ellipse score: {score:.2f}', (x, y + 60), green)
+
+        return image

@@ -77,6 +77,10 @@ class Extractor:
     get_tire_bounding_ellipses(tire_width: int, tire_sidewall: int, outer_extend: int)
         Returns two ellipses, between which the tire occurs in (mirrored) image.
 
+    visualise_bounding_ellipses(tire_width: int, tire_sidewall: int, outer_extend: int, start: float, end: float,
+                                tire_bounding_ellipses: Union[tuple, None])
+        Returns image with drawn tire model created from bounding ellipses.
+
     extract_tread(final_width: int, tire_width: int, start: float, end: float,
                   tire_bounding_ellipses: Union[tuple, None], cores: int)
         Returns new image with extracted tire tread (unwrapped).
@@ -328,6 +332,99 @@ class Extractor:
         outer_ellipse = perspective_shift_ellipse(tire_ellipse, -outer_extend)
 
         return outer_ellipse, inner_ellipse
+
+    def visualise_bounding_ellipses(self, tire_width: int = 0, tire_sidewall: int = 0, outer_extend: int = 0,
+                                    start: float = -10, end: float = 80,
+                                    tire_bounding_ellipses: Union[tuple, None] = None) -> np.ndarray:
+        """
+        Creates color (BGR) image with drawn tire model.
+
+        Parameters
+        ----------
+        tire_width : int
+            Width of tire in original image (in pixels). Is only used when auto-generating tire bounding ellipses.
+
+            0 for automatic (overestimates on purpose to avoid missing tread).
+
+        tire_sidewall : int
+            Height of tire sidewall in pixels, for automatic (half of tire width).
+
+            0 for automatic (quarter of wheel diameter).
+
+        outer_extend : int
+            If non-zero, extend outer ellipse (outwards) by this much. To make sure that entirety of tire tread is
+            visible between bounding ellipses.
+
+        start : float
+            Starting angle of extraction (must be between -90 and 90, -90 is top of tire, 0 is middle, 90 is bottom).
+
+        end : float
+            End angle of extraction (must be greater than `start` and must be between -90 and 90).
+
+        tire_bounding_ellipses : Union[tuple, None]
+            Outer and inner tire bounding ellipses.
+
+            If none, they will be auto-generated.
+
+        Returns
+        -------
+        numpy.ndarray
+            BGR image with drawn ellipses defining the tire model used for tread extraction.
+
+            Red ellipse = main ellipse (car wheel).
+
+            Yellow ellipses = bounding ellipses of tire (outer and inner sides of tire).
+
+            Green rectangle = area of tread extraction.
+
+        Raises
+        ------
+        ValueError
+            When any of parameters are invalid (negative resolution, wrong degrees, invalid ellipses etc.).
+        """
+
+        if start < -90 or end > 90:
+            raise ValueError('Invalid start or end position, cannot extract tread out of view.')
+        if start >= end:
+            raise ValueError('Start angle has to be less than the end angle.')
+        if tire_width < 0:
+            raise ValueError('Tire width must be greater than 0.')
+        if tire_bounding_ellipses is not None:
+            if len(tire_bounding_ellipses) != 2:
+                raise ValueError('You must provide exactly 2 ellipses.')
+            if not isinstance(tire_bounding_ellipses[0], Ellipse) or not isinstance(tire_bounding_ellipses[1], Ellipse):
+                raise ValueError('One of the provided ellipses is not an instance of treadscan.Ellipse.')
+
+        if tire_bounding_ellipses is None:
+            tire_bounding_ellipses = self.get_tire_bounding_ellipses(tire_width, tire_sidewall, outer_extend)
+
+        outer, inner = tire_bounding_ellipses
+
+        if outer.cx > inner.cx:
+            raise ValueError('Ellipses are crossed, outer should be on the left side, inner on the right side.')
+
+        start_a = outer.point_on_ellipse(start)
+        start_b = inner.point_on_ellipse(start)
+        end_a = outer.point_on_ellipse(end)
+        end_b = inner.point_on_ellipse(end)
+
+        image = cv2.cvtColor(self.image, cv2.COLOR_GRAY2BGR)
+        yellow = (0, 255, 255)
+        green = (0, 255, 0)
+
+        # Draw horizontal lines, top and bottom of tread
+        cv2.line(image, (int(start_a[0]), int(start_a[1])), (int(start_b[0]), int(start_b[1])), thickness=5,
+                 color=green)
+        cv2.line(image, (int(end_a[0]), int(end_a[1])), (int(end_b[0]), int(end_b[1])), thickness=5, color=green)
+
+        # Draw bounding ellipses
+        cv2.ellipse(image, *outer.cv2_ellipse(), thickness=5, color=yellow)
+        cv2.ellipse(image, *inner.cv2_ellipse(-90, 90), thickness=5, color=yellow)
+        # Edges of tire tread
+        cv2.ellipse(image, *outer.cv2_ellipse(start, end), thickness=5, color=green)
+        cv2.ellipse(image, *inner.cv2_ellipse(start, end), thickness=5, color=green)
+
+        return image
 
     def extract_tread(self, final_width: int = 0, tire_width: int = 0, start: float = -10, end: float = 80,
                       tire_bounding_ellipses: Union[tuple, None] = None, cores: int = 4) -> np.ndarray:
