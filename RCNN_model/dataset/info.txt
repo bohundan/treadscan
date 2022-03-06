@@ -1,0 +1,15 @@
+--- Dataset description ---
+
+Each object (car wheel) is described with it's bounding box and three keypoints.
+
+Annotations for each image contain:
+- coordinates of bounding boxes (each object has a bounding box, which is described with top left and bottom right corners in [x1, y1, x2, y2] format);
+- coordinates of keypoints (each object has 3 keypoints, which are described in [x, y, visibility] format).
+
+In this dataset all keypoints are visible (i.e. visibility=1).
+All bounding boxes are contained WITHIN the image, trying to train a model with partially hidden bounding box or even keypoints is more complicated. Or maybe it isn't but I had
+trouble with creating transformed images with hidden bboxes/keypoints.
+
+First keypoint - top of car wheel
+Second keypoint - bottom of car wheel
+Third keypoint - right side of car wheel (closest side, if car's left side wheels are being detected, the images should be mirrored, refer to treadscan.extractor.CameraPosition)
