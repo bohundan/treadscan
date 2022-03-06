@@ -2,6 +2,7 @@
 
 [![PyPI version](https://badge.fury.io/py/treadscan.svg)](https://badge.fury.io/py/treadscan)
 [![Documentation Status](https://readthedocs.org/projects/treadscan/badge/?version=latest)](https://treadscan.readthedocs.io/en/latest/?badge=latest)
+[![Downloads](https://pepy.tech/badge/treadscan)](https://pepy.tech/project/treadscan)
 
 This package provides utilities for extracting tire tread (pattern) from images, or even from video of passing cars.
 
