@@ -4,7 +4,7 @@ for example if treadscan Segmentor fails (like when wheel is too dark) to detect
 """
 
 from datetime import datetime
-from math import sqrt, asin, degrees, atan
+from math import sqrt, asin, degrees, atan, radians
 from typing import Union
 import sys
 
@@ -61,7 +61,11 @@ class Annotator:
         self.flipped = flipped
         if self.flipped:
             self.image = cv2.flip(self.image, 1)
-        self.image = cv2.cvtColor(self.image, cv2.COLOR_GRAY2BGR)
+        # Convert grayscale to BGR
+        if len(self.image.shape) == 2:
+            self.image = cv2.cvtColor(self.image, cv2.COLOR_GRAY2BGR)
+        else:
+            self.image = image.copy()
 
         self.mouse_pos = None
         self.points = {
@@ -129,6 +133,32 @@ class Annotator:
 
         return Ellipse(cx, cy, width, height, angle)
 
+    def draw_only_annotation_points(self, image: np.ndarray):
+        """
+        Draw each point labeled with the key used to set it.
+
+        Parameters
+        ----------
+        image : numpy.ndarray
+            Image on which to draw annotation points.
+        """
+
+        # Unused points are drawn in top left corner in one column
+        y_pos = 8
+        for key, value in self.points.items():
+            if value is not None:
+                # Point is set, draw it where it is set
+                cv2.circle(image, value, 8, (0, 128, 255), -1)
+                point = (value[0] - 4, value[1] + 4)
+                cv2.putText(image, chr(key), point, cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5, color=(0, 0, 0),
+                            thickness=1)
+            else:
+                # Point is not set, draw it at the bottom of the column
+                cv2.circle(image, (4, y_pos), 8, (0, 128, 255), -1)
+                cv2.putText(image, chr(key), (0, y_pos + 4), cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5,
+                            color=(0, 0, 0), thickness=1)
+                y_pos += 16
+
     def draw_points(self, image: np.ndarray) -> Union[None, tuple]:
         """
         Draws points over image, builds ellipse parameters and bounding ellipses.
@@ -157,25 +187,6 @@ class Annotator:
         width = self.points[ord('w')]
         start = self.points[ord('u')]
         end = self.points[ord('i')]
-
-        def draw_only_annotation_points():
-            """Draw each point labeled with the key used to set it"""
-
-            # Unused points are drawn in top left corner in one column
-            y_pos = 8
-            for key, value in self.points.items():
-                if value is not None:
-                    # Point is set, draw it where it is set
-                    cv2.circle(image, value, 8, (0, 128, 255), -1)
-                    point = (value[0] - 4, value[1] + 4)
-                    cv2.putText(image, chr(key), point, cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5, color=(0, 0, 0),
-                                thickness=1)
-                else:
-                    # Point is not set, draw it at the bottom of the column
-                    cv2.circle(image, (4, y_pos), 8, (0, 128, 255), -1)
-                    cv2.putText(image, chr(key), (0, y_pos + 4), cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5,
-                                color=(0, 0, 0), thickness=1)
-                    y_pos += 16
 
         # Calculate tire sidewall height as distance between top or bottom point and the sidewall point
         if sidewall and top and bottom:
@@ -245,7 +256,7 @@ class Annotator:
 
             # Ellipse is too small, can't proceed
             if ellipse.height == 0 or ellipse.width == 0:
-                draw_only_annotation_points()
+                self.draw_only_annotation_points(image)
                 return None
 
             # Create extractor
@@ -262,7 +273,7 @@ class Annotator:
 
             # Ellipses are too small, can't proceed
             if outer.height == 0 or outer.width == 0 or inner.height == 0 or inner.width == 0:
-                draw_only_annotation_points()
+                self.draw_only_annotation_points(image)
                 return None
 
             # Draw main ellipse
@@ -352,8 +363,210 @@ class Annotator:
             # One of 3 main points missing, no ellipse could be constructed
             result = None
 
-        draw_only_annotation_points()
+        self.draw_only_annotation_points(image)
         return result
+
+    def draw_keypoints(self, image: np.ndarray) -> bool:
+        """
+        Draws only 3 points of main ellipse (car wheel ellipse).
+
+        Parameters
+        ----------
+        image : numpy.ndarray
+            Image on which to draw keypoints on.
+
+        Returns
+        -------
+        bool
+            True when all points have been set and create an ellipse (with non-zero width or height).
+
+            False otherwise.
+        """
+
+        top = self.points[ord('t')]
+        bottom = self.points[ord('b')]
+        right = self.points[ord('r')]
+
+        # Make sure top is above bottom
+        if top and bottom and top[1] > bottom[1]:
+            # If top moved, apply floor to top
+            if self.__prev_top and top[1] != self.__prev_top[1]:
+                top = top[0], bottom[1]
+            # If bottom moved, apply ceiling to bottom
+            elif self.__prev_bottom and bottom[1] != self.__prev_bottom[1]:
+                bottom = bottom[0], top[1]
+            # Points have just been set and are wrong, just apply floor to top
+            else:
+                top = top[0], bottom[1]
+
+            self.points[ord('t')] = top
+            self.points[ord('b')] = bottom
+
+        self.__prev_top = top
+        self.__prev_bottom = bottom
+
+        # All 3 main points have been set, ellipses can be constructed
+        if top and bottom and right:
+            # Ellipse has to be taller rather than wide
+            cx, cy = (bottom[0] + top[0]) / 2, (bottom[1] + top[1]) / 2
+            h = sqrt((bottom[0] - top[0]) ** 2 + (bottom[1] - top[1]) ** 2)
+            w = 2 * sqrt((right[0] - cx) ** 2 + (right[1] - cy) ** 2)
+            # Avoid division by 0
+            w += (sys.float_info.epsilon if w == 0.0 else 0)
+            # If ellipse is wider than taller, move right point closer to center (on circle perimeter)
+            if int(w) > int(h):
+                t = h / w
+                right = int((1 - t) * cx + t * right[0]), int((1 - t) * cy + t * right[1])
+                self.points[ord('r')] = right
+
+            # Create ellipse from 3 main points
+            ellipse = self.ellipse_from_points(top, bottom, right)
+
+            # Ellipse is too small, can't proceed
+            if ellipse.height == 0 or ellipse.width == 0:
+                self.draw_only_annotation_points(image)
+                return False
+
+            # Draw main ellipse
+            cv2.ellipse(image, *ellipse.cv2_ellipse(), thickness=2, color=(0, 0, 255))
+            cv2.circle(image, ellipse.get_center(), 3, (0, 0, 255), -1)
+            # Draw lines between top and bottom and center and right point
+            cv2.line(image, ellipse.get_center(), right, (255, 255, 0), thickness=1)
+            cv2.line(image, top, bottom, (255, 255, 0), thickness=1)
+
+            # Draw bounding box
+            cv2.rectangle(image, *ellipse.bounding_box(), (255, 255, 0), thickness=2)
+
+            self.draw_only_annotation_points(image)
+            return True
+
+        self.draw_only_annotation_points(image)
+        return False
+
+    def annotate_keypoints(self) -> str:
+        """
+        Shows a cv2 window, uses same control scheme as Annotator.annotate(), except this method creates a JSON string
+        consisting of bounding box (top left and bottom right coordinates) and keypoint coordinates.
+
+        3 keypoints corresponding to the 'T', 'B' and 'R' keys must be labeled:
+
+            'T' : Top of car wheel (without tire sidewall).
+
+            'B' : Bottom of car wheel (without tire sidewall).
+
+            'R' : Right (closest) side of car wheel (without tire sidewall). Image should be flipped the other way
+                  around if labeling the car's left side wheels. Refer to treadscan.extractor.CameraPosition.
+
+        Together, these keypoints can be used to create an ellipse, which defines the car wheel. This method can be used
+        to create annotation for training a model for car wheel detection.
+
+        Use spacebar to save 3 keypoints. You can create multiple ellipses by continuing with annotation after pressing
+        spacebar. Use enter to submit keypoints (ellipses).
+
+        Returns
+        -------
+        str
+            Empty if annotation is canceled (escape).
+
+            JSON string with bounding box and keypoints if submitted (enter).
+        """
+
+        self.points = {
+            ord('t'): None,  # Top
+            ord('b'): None,  # Bottom
+            ord('r'): None,  # Right
+        }
+
+        def mouse_callback(event, x, y, flags, param):
+            # Save current mouse position over image
+            if event == cv2.EVENT_MOUSEMOVE:
+                self.mouse_pos = x, y
+
+        submitted = False
+        bounding_boxes = []
+        keypoints = []
+
+        def save_keypoints():
+            """Save annotated keypoints"""
+
+            top = self.points[ord('t')]
+            bottom = self.points[ord('b')]
+            right = self.points[ord('r')]
+
+            # Reset keypoints
+            self.points = {
+                ord('t'): None,  # Top
+                ord('b'): None,  # Bottom
+                ord('r'): None,  # Right
+            }
+            # Keep drawn ellipse
+            self.image = image
+
+            # Save points and bounding box
+            top = int(top[0] / self.scale), int(top[1] / self.scale)
+            bottom = int(bottom[0] / self.scale), int(bottom[1] / self.scale)
+            right = int(right[0] / self.scale), int(right[1] / self.scale)
+            keypoints.append([top, bottom, right])
+            bounding_boxes.append(self.ellipse_from_points(top, bottom, right).bounding_box())
+
+        while True:
+            # Start with clean image
+            image = self.image.copy()
+            # Draw points
+            success = self.draw_keypoints(image)
+
+            # Wait for user input
+            cv2.imshow('Image', image)
+            cv2.namedWindow('Image', cv2.WINDOW_NORMAL)
+            cv2.setMouseCallback('Image', mouse_callback)
+            key = cv2.waitKey(30)
+
+            # If user closed window or pressed escape
+            if cv2.getWindowProperty('Image', cv2.WND_PROP_VISIBLE) < 1 or key == 27:
+                break
+
+            # Enter to submit
+            elif key == 13:
+                if success:
+                    save_keypoints()
+                submitted = True
+                break
+
+            # An annotating key was pressed
+            elif key != -1 and key in self.points.keys():
+                self.points[key] = self.mouse_pos
+
+            # F to flip image
+            elif key == ord('f'):
+                self.image = cv2.flip(self.image, 1)
+                self.flipped = not self.flipped
+
+            # Spacebar to save keypoints
+            elif key == 32 and success:
+                save_keypoints()
+
+        cv2.destroyAllWindows()
+
+        if submitted and keypoints and bounding_boxes:
+            # Construct list of bounding boxes
+            bbox_string = '['
+            for bbox in bounding_boxes:
+                top_left, bottom_right = bbox
+                bbox_string += f'[{top_left[0]}, {top_left[1]}, {bottom_right[0]}, {bottom_right[1]}]'
+                bbox_string += ', '
+            bbox_string = bbox_string[:-2] + ']'
+
+            # Construct list of keypoints
+            keypoint_string = '['
+            for points in keypoints:
+                t, b, r = points
+                keypoint_string += f'[[{t[0]}, {t[1]}, 1], [{b[0]}, {b[1]}, 1], [{r[0]}, {r[1]}, 1]]'
+                keypoint_string += ', '
+            keypoint_string = keypoint_string[:-2] + ']'
+
+            return '{"bboxes": ' + bbox_string + ', "keypoints": ' + keypoint_string + '}'
+        else:
+            return ''
 
     def annotate(self) -> Union[None, tuple]:
         """
