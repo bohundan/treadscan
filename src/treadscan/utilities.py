@@ -1,8 +1,8 @@
 """
 This module contains various useful methods that can be used in multiple different places.
 """
-
-from math import sin, cos, radians
+import sys
+from math import atan, cos, sin, degrees, radians, sqrt
 from os.path import isfile
 
 import cv2
@@ -91,13 +91,13 @@ class Ellipse:
 
         return self.cx, self.cy
 
-    def point_on_ellipse(self, degrees: float) -> (float, float):
+    def point_on_ellipse(self, deg: float) -> (float, float):
         """
         Calculate point on ellipse perimeter, accounting for center offset.
 
         Parameters
         ----------
-        degrees : float
+        deg : float
             Angle on ellipse.
 
             0 and 180 lie on X axis (same X as center).
@@ -111,7 +111,7 @@ class Ellipse:
             is in top left corner, NOT the ellipse center.
         """
 
-        t = radians(degrees % 360)
+        t = radians(deg % 360)
 
         # Ellipse parameters
         theta = radians(self.angle)
@@ -161,6 +161,51 @@ class Ellipse:
         """
 
         return [(self.cx, self.cy), (self.width // 2, self.height // 2), self.angle, start, end]
+
+
+def ellipse_from_points(top: (int, int), bottom: (int, int), right: (int, int)) -> Ellipse:
+    """
+    Create ellipse from 3 points (top, bottom and right).
+
+    Parameters
+    ----------
+    top : (int, int)
+        X and Y coordinates of the top of the ellipse (at -90 degrees).
+
+    bottom : (int, int)
+        X and Y coordinates of the bottom of the ellipse (at 90 degrees).
+
+    right : (int, int)
+        X and Y coordinates of the right side of the ellipse (at 0 degrees)
+
+    Returns
+    -------
+    treadscan.Ellipse
+        Ellipse constructed from provided points.
+    """
+
+    # Center is between top and bottom, in the middle
+    cx = (bottom[0] + top[0]) / 2
+    cy = (bottom[1] + top[1]) / 2
+
+    # Height is the Euclidean distance between top and bottom
+    height = sqrt((bottom[0] - top[0])**2 + (bottom[1] - top[1])**2)
+    # Width is twice the Euclidean distance between right and center
+    width = 2 * sqrt((right[0] - cx)**2 + (right[1] - cy)**2)
+
+    # Calculating angle using a vector drawn between center and top of ellipse
+    x = abs(cx - top[0])
+    y = cy - top[1]
+
+    # Avoid division by zero
+    if x == 0:
+        angle = 0
+    else:
+        angle = 90 - degrees(atan(y / x))
+    # Flip angle to the other side if ellipse is leaning to the left
+    angle *= -1 if top[0] < cx else 1
+
+    return Ellipse(int(cx), int(cy), int(width), int(height), angle)
 
 
 def load_image(path: str):

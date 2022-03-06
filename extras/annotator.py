@@ -11,7 +11,7 @@ import sys
 import cv2
 import numpy as np
 from treadscan.extractor import Extractor, CameraPosition
-from treadscan.utilities import Ellipse, scale_image
+from treadscan.utilities import Ellipse, ellipse_from_points, scale_image
 
 
 class Annotator:
@@ -89,49 +89,6 @@ class Annotator:
         self.__prev_end = None
         self.__prev_top = (0, 0)
         self.__prev_bottom = (0, 0)
-
-    @staticmethod
-    def ellipse_from_points(top: (int, int), bottom: (int, int), right: (int, int)) -> Ellipse:
-        """
-        Create ellipse from 3 points (top, bottom and right).
-
-        Parameters
-        ----------
-        top : (int, int)
-            X and Y coordinates of the top of the ellipse (at -90 degrees).
-
-        bottom : (int, int)
-            X and Y coordinates of the bottom of the ellipse (at 90 degrees).
-
-        right : (int, int)
-            X and Y coordinates of the right side of the ellipse (at 0 degrees)
-
-        Returns
-        -------
-        treadscan.Ellipse
-            Ellipse constructed from provided points.
-        """
-
-        # Center is between top and bottom, in the middle
-        cx = (bottom[0] + top[0]) / 2
-        cy = (bottom[1] + top[1]) / 2
-
-        # Height is the Euclidean distance between top and bottom
-        height = sqrt((bottom[0] - top[0])**2 + (bottom[1] - top[1])**2)
-        # Width is twice the Euclidean distance between right and center
-        width = 2 * sqrt((right[0] - cx)**2 + (right[1] - cy)**2)
-
-        # Calculating angle using a vector drawn between center and top of ellipse
-        x = abs(cx - top[0])
-        # Avoid division by 0
-        x += (sys.float_info.epsilon if x == 0.0 else 0)
-        y = cy - top[1]
-
-        angle = 90 - degrees(atan(y / x))
-        # Flip angle to the other side if ellipse is leaning to the left
-        angle *= -1 if top[0] < cx else 1
-
-        return Ellipse(cx, cy, width, height, angle)
 
     def draw_only_annotation_points(self, image: np.ndarray):
         """
@@ -243,16 +200,16 @@ class Annotator:
             cx, cy = (bottom[0] + top[0]) / 2, (bottom[1] + top[1]) / 2
             h = sqrt((bottom[0] - top[0])**2 + (bottom[1] - top[1])**2)
             w = 2 * sqrt((right[0] - cx)**2 + (right[1] - cy)**2)
-            # Avoid division by 0
+            # Avoid division by zero
             w += (sys.float_info.epsilon if w == 0.0 else 0)
-            # If ellipse is wider than taller, move right point closer to center (on circle perimeter)
+            # If ellipse is wider than taller, move right point closer to center (on circle perimeter) along its axis
             if int(w) > int(h):
                 t = h/w
-                right = int((1-t)*cx+t*right[0]), int((1-t)*cy+t*right[1])
+                right = int((1 - t) * cx + t * right[0]), int((1 - t) * cy + t * right[1])
                 self.points[ord('r')] = right
 
             # Create ellipse from 3 main points
-            ellipse = self.ellipse_from_points(top, bottom, right)
+            ellipse = ellipse_from_points(top, bottom, right)
 
             # Ellipse is too small, can't proceed
             if ellipse.height == 0 or ellipse.width == 0:
@@ -413,14 +370,14 @@ class Annotator:
             w = 2 * sqrt((right[0] - cx) ** 2 + (right[1] - cy) ** 2)
             # Avoid division by 0
             w += (sys.float_info.epsilon if w == 0.0 else 0)
-            # If ellipse is wider than taller, move right point closer to center (on circle perimeter)
+            # If ellipse is wider than taller, move right point closer to center (on circle perimeter) along its axis
             if int(w) > int(h):
                 t = h / w
                 right = int((1 - t) * cx + t * right[0]), int((1 - t) * cy + t * right[1])
                 self.points[ord('r')] = right
 
             # Create ellipse from 3 main points
-            ellipse = self.ellipse_from_points(top, bottom, right)
+            ellipse = ellipse_from_points(top, bottom, right)
 
             # Ellipse is too small, can't proceed
             if ellipse.height == 0 or ellipse.width == 0:
@@ -507,7 +464,7 @@ class Annotator:
             bottom = int(bottom[0] / self.scale), int(bottom[1] / self.scale)
             right = int(right[0] / self.scale), int(right[1] / self.scale)
             keypoints.append([top, bottom, right])
-            bounding_boxes.append(self.ellipse_from_points(top, bottom, right).bounding_box())
+            bounding_boxes.append(ellipse_from_points(top, bottom, right).bounding_box())
 
         while True:
             # Start with clean image

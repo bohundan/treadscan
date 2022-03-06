@@ -295,10 +295,10 @@ class Extractor:
             """
 
             # Shift these 3 points, then use them to recreate ellipse
-            top = ellipse.point_on_ellipse(degrees=-90)
-            right = ellipse.point_on_ellipse(degrees=0)
-            # left = ellipse.point_on_ellipse(degrees=-180)
-            bottom = ellipse.point_on_ellipse(degrees=90)
+            top = ellipse.point_on_ellipse(deg=-90)
+            right = ellipse.point_on_ellipse(deg=0)
+            # left = ellipse.point_on_ellipse(deg=-180)
+            bottom = ellipse.point_on_ellipse(deg=90)
 
             # Shifted points
             top = int(top[0]) + shift_by, int(top[1])
@@ -306,13 +306,13 @@ class Extractor:
             bottom = int(bottom[0]) + shift_by, int(bottom[1])
 
             # Perspective transform
-            center_offset = self.image.shape[1] // 2 - int(ellipse.point_on_ellipse(degrees=-90)[0])
+            center_offset = self.image.shape[1] // 2 - int(ellipse.point_on_ellipse(deg=-90)[0])
             top = self.perspective_transform_y_axis(beta, top[0] + center_offset, top[1])
             top = top[0] - center_offset, top[1]
-            center_offset = self.image.shape[1] // 2 - int(ellipse.point_on_ellipse(degrees=0)[0])
+            center_offset = self.image.shape[1] // 2 - int(ellipse.point_on_ellipse(deg=0)[0])
             right = self.perspective_transform_y_axis(beta, right[0] + center_offset, right[1])
             right = right[0] - center_offset, right[1]
-            center_offset = self.image.shape[1] // 2 - int(ellipse.point_on_ellipse(degrees=90)[0])
+            center_offset = self.image.shape[1] // 2 - int(ellipse.point_on_ellipse(deg=90)[0])
             bottom = self.perspective_transform_y_axis(beta, bottom[0] + center_offset, bottom[1])
             bottom = bottom[0] - center_offset, bottom[1]
 
@@ -506,8 +506,8 @@ class Extractor:
             inner_ellipse.angle = 0
 
         # Determining horizontal step size
-        point_a = outer_ellipse.point_on_ellipse(degrees=0)
-        point_b = inner_ellipse.point_on_ellipse(degrees=0)
+        point_a = outer_ellipse.point_on_ellipse(deg=0)
+        point_b = inner_ellipse.point_on_ellipse(deg=0)
         # Euclidean distance between points
         tire_width_in_image = sqrt((point_a[0] - point_b[0])**2 + (point_a[1] - point_b[1])**2)
         step_size = tire_width_in_image / tread_width
@@ -644,8 +644,8 @@ def tire_tread_part(index: int, linspace: np.ndarray) -> (int, np.ndarray):
     for deg in linspace:
         # Point A lies on outer ellipse, point B on inner ellipse
         # Line is created between A and B
-        point_a = global_outer_ellipse.point_on_ellipse(degrees=deg)
-        point_b = global_inner_ellipse.point_on_ellipse(degrees=deg)
+        point_a = global_outer_ellipse.point_on_ellipse(deg=deg)
+        point_b = global_inner_ellipse.point_on_ellipse(deg=deg)
         x_step = (point_b[0] - point_a[0]) / global_tread_width
         y_step = (point_b[1] - point_a[1]) / global_tread_width
         for x in range(global_tread_width):

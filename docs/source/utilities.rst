@@ -8,6 +8,12 @@ Ellipse
    :members:
 
 
+ellipse_from_points()
+-------------
+
+.. autofunction:: treadscan.utilities.ellipse_from_points
+
+
 load_image()
 -------------
 
