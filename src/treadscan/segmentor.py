@@ -63,7 +63,7 @@ class Segmentor:
         else:
             self.image = image
 
-    def to_binary(self, threshold: int = 135) -> np.ndarray:
+    def to_binary(self, threshold: int = 100) -> np.ndarray:
         """
         Creates a binary image using thresholding and filtering methods.
 
@@ -91,11 +91,22 @@ class Segmentor:
         h, w = self.image.shape
 
         # Kernel with odd size
-        kernel_size = h // 100 - (1 if (h // 100) % 2 == 0 else 0)
+        kernel_size = max(w, h) // 100 - (1 if (max(w, h) // 100) % 2 == 0 else 0)
         kernel_size = max(3, kernel_size)
 
         # Blur image
         image = cv2.medianBlur(self.image, kernel_size)
+
+        # Increase contrast
+        # https://stackoverflow.com/questions/39510072/algorithm-for-adjustment-of-image-levels/48859502#48859502
+        contrast = 50
+        f = 131 * (contrast + 127) / (127 * (131 - contrast))
+        alpha_c = f
+        gamma_c = 127 * (1 - f)
+        image = cv2.addWeighted(image, alpha_c, image, 0, gamma_c)
+
+        # Brighten mid-tones
+        image[(64 < image) & (image < 192)] += 64
 
         # Thresholding
         _, image = cv2.threshold(image, threshold, 255, cv2.THRESH_BINARY)
@@ -107,12 +118,13 @@ class Segmentor:
         cv2.floodFill(image, None, seedPoint=(w - 1, h - 1), newVal=0)
 
         # Fill holes
-        image = improutils.fill_holes(image, close=True, size=h // 50)
+        image = improutils.fill_holes(image, close=True, size=kernel_size)
 
         # Erosion, dilatation to get rid of some noise
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
-        image = cv2.erode(image, kernel, iterations=1)
-        image = cv2.dilate(image, kernel, iterations=1)
+        erosion_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+        dilation_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size * 3))
+        image = cv2.erode(image, erosion_kernel, iterations=1)
+        image = cv2.dilate(image, dilation_kernel, iterations=1)
 
         return image
 
@@ -231,7 +243,7 @@ class Segmentor:
 
         return best_ellipse
 
-    def label_contours(self, threshold: int = 135, min_area: int = 0) -> np.ndarray:
+    def label_contours(self, threshold: int = 100, min_area: int = 0) -> np.ndarray:
         """
         Label each contour with its aspect ratio, area size and valid contours with the ellipse score of corresponding
         fitted ellipse. Labeled contours are stored in BGR image (3D numpy array).
