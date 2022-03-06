@@ -1,8 +1,12 @@
 # Training your own car wheel detection model with PyTorch
 
+![Wheel detection using trained model](https://raw.githubusercontent.com/bohundan/treadscan/master/docs/source/_static/test_detection.jpg)
+
 ### Sources
 https://medium.com/@alexppppp/how-to-train-a-custom-keypoint-detection-model-with-pytorch-d9af90e111da
+
 https://github.com/alexppppp/keypoint_rcnn_training_pytorch
+
 https://github.com/scnuhealthy/Pytorch-Keypoint-Detection
 
 ## Preparing your dataset
