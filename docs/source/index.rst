@@ -10,9 +10,9 @@ Treadscan documentation
 
 Required Python version: ``python3.8`` or higher.
 
-Required packages: ``numpy>=1.22.1``, ``opencv-contrib-python>=4.5.5.62``, ``improutils>=1.1.8``.
+Required packages: ``numpy``, ``opencv-python``, ``opencv-contrib-python``, ``improutils``.
 
-To build this documentation, you need ``Sphinx>=4.4.0``, ``numpydoc>=1.2`` and ``sphinx-rtd-theme=>1.0.0``.
+To build this documentation, you need ``Sphinx``, ``numpydoc`` and ``sphinx-rtd-theme``.
 
 **Treadscan modules:**
 
