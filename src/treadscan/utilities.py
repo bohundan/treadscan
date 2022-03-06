@@ -124,6 +124,31 @@ class Ellipse:
 
         return x, y
 
+    def bounding_box(self) -> list:
+        """
+        Create bounding box around ellipse. Compatible with OpenCV's cv2.rectangle() drawing operation (returns points
+        as integer tuples).
+
+        Returns
+        -------
+        list
+            List of two points (tuples) - top left and bottom right corner of bounding box.
+        """
+
+        theta = radians(self.angle)
+
+        a = self.height / 2
+        b = self.width / 2
+
+        # Ellipse limits on given axis
+        y = np.sqrt(a**2 * np.cos(theta)**2 + b**2 * np.sin(theta)**2)
+        x = np.sqrt(a**2 * np.sin(theta)**2 + b**2 * np.cos(theta)**2)
+
+        top_left = self.cx - int(x), self.cy - int(y)
+        bottom_right = self.cx + int(x), self.cy + int(y)
+
+        return [top_left, bottom_right]
+
     def cv2_ellipse(self, start: float = 0, end: float = 360) -> list:
         """
         Returns self as list, which when unpacked (star operator) is compatible with cv2.ellipse() drawing operation.
