@@ -263,10 +263,10 @@ class Extractor:
         #          205 mm * 0.55 = 113 mm tire sidewall
         #          16inch = 406 mm wheel diameter
         if tire_width == 0:
-            # Overestimate by 10% on purpose (to avoid cropping tire tread)
-            tire_width = int(self.main_ellipse.height / 1.8)
+            tire_width = int(self.main_ellipse.height / 2)
         if tire_sidewall == 0:
-            tire_sidewall = int(self.main_ellipse.height / 3.6)
+            # After some experimentation, it seems 1/5 is a better factor than 1/4
+            tire_sidewall = int(self.main_ellipse.height / 5)
 
         # Extend main ellipse to match tire perimeter
         height2 = self.main_ellipse.height + tire_sidewall * 2
