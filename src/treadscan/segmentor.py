@@ -1,11 +1,9 @@
 """
 This module is used for image segmentation, in particular to find the ellipse defining the tire position in image.
 
-Assuming that the captured vehicle has bright enough wheel rim(s), as dark ones will not be contrasting with the tire
-and will be lost during thresholding. Otherwise, the next step is to determine the tire's position by finding the
-ellipse parameters (center of ellipse, height, width and angle).
-
-The parameters defining an ellipse are the "output" of this module.
+RCNNSegmentor uses a region based convolutional neural network to detect car wheels, Segmentor uses basic manual image
+segmentation techniques. While Segmentor is simpler, it has no chance of detecting dark rims, as they don't contrast
+with the car's tires. To use RCNNSegmentor you need to install `torch` and `torchvision`.
 """
 
 from math import sin, cos, radians
@@ -15,7 +13,112 @@ import cv2
 import improutils
 import numpy as np
 
-from .utilities import Ellipse
+from .utilities import Ellipse, ellipse_from_points
+
+
+class RCNNSegmentor:
+    """
+    Uses region based convolutional neural network model to find car wheels in images.
+
+    For training your own model, see https://github.com/bohundan/treadscan/tree/master/RCNN_model. Some training and
+    testing data is available there also.
+
+    In order to use this class you need to install `torch` and `torchvision` libraries.
+
+    Attributes
+    ----------
+    device : torch.device
+        CUDA if available, CPU otherwise.
+
+    model : torchvision.models.detection.keypointrcnn_resnet50_fpn
+        Region based convolutional neural network model for keypoint detection. Trained to detect 3 keypoints defining
+        position of car wheels in image.
+
+    Methods
+    -------
+    find_ellipse(image: numpy.ndarray)
+        Finds and returns ellipse (car wheel/rim 'inside' tire). Uses RCNN to detect all wheels in image, picks the best
+        one (with the highest confidence).
+    """
+
+    def __init__(self, path_to_trained_rcnn_model: str):
+        """
+        Parameters
+        ----------
+        path_to_trained_rcnn_model : str
+            Path to file of weight for the RCNN model. Pretrained one is available at
+            https://github.com/bohundan/treadscan/blob/master/RCNN_model/saved_model.pth.
+        """
+
+        import torch
+        from torchvision.models.detection import keypointrcnn_resnet50_fpn
+        from torchvision.models.detection.rpn import AnchorGenerator
+
+        anchor_generator = AnchorGenerator(sizes=(32, 64, 128, 256, 512),
+                                           aspect_ratios=(0.25, 0.5, 0.75, 1.0, 2.0, 3.0, 4.0))
+        self.model = keypointrcnn_resnet50_fpn(pretrained=False, pretrained_backbone=True, num_keypoints=3,
+                                               num_classes=2, rpn_anchor_generator=anchor_generator)
+
+        self.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+        self.model.to(self.device)
+        self.model.load_state_dict(torch.load(path_to_trained_rcnn_model, map_location=self.device))
+        self.model.eval()
+
+    def find_ellipse(self, image: np.ndarray) -> Union[Ellipse, None]:
+        """
+        Parameters
+        ----------
+        image : numpy.ndarray
+            Grayscale or BGR image on which processing operations will be performed.
+
+        Returns
+        -------
+        treadscan.Ellipse
+            Ellipse defined by center coordinates, size and rotation (in degrees).
+
+        None
+            If no ellipse was found.
+
+        Raises
+        ------
+        ValueError
+            If image has invalid resolution.
+        """
+
+        import torch
+        from torchvision.transforms import functional
+
+        if image.shape[0] == 0 or image.shape[1] == 0:
+            raise ValueError('Image is zero pixels tall/wide.')
+
+        if len(image.shape) != 2:
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+        # Convert to tensor
+        tensor = functional.to_tensor(image)
+        # Add batch dimension
+        tensor = tensor.unsqueeze(0).to(self.device)
+
+        # Turn off context manager for gradient calculation (memory saving)
+        with torch.no_grad():
+            output = self.model(tensor)
+
+        scores = output[0]['scores'].detach().cpu().numpy()
+
+        # No hits
+        if len(scores) == 0:
+            return None
+        else:
+            # Detections are sorted by score, highest is first
+            best = 0
+
+            # Get keypoints from output
+            keypoints = []
+            for point in output[0]['keypoints'][best].detach().cpu().numpy():
+                keypoints.append((int(point[0]), int(point[1])))
+
+            ellipse = ellipse_from_points(*keypoints)
+            return ellipse
 
 
 class Segmentor:
@@ -47,7 +150,7 @@ class Segmentor:
         Parameters
         ----------
         image : numpy.ndarray
-            Grayscale image on which processing operations will be performed.
+            Grayscale or BGR image on which processing operations will be performed.
 
         Raises
         ------
