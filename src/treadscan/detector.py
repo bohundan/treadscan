@@ -307,19 +307,17 @@ class Detector:
                 raise RuntimeError('Footage and background sample have mismatched resolution.')
             curr_frame = self._prep_image(frame, scale, blur_kernel)
 
-            if self.vehicle_present_in_image(curr_frame):
-                if not self.motion_between_images(curr_frame, prev_frame):
-                    # Vehicle is present and not moving
-                    last_hit = 0
-                elif last_hit < window:
-                    # Vehicle is present but moving
-                    last_hit += 1
+            car_present = self.vehicle_present_in_image(curr_frame)
+            car_not_moving = not self.motion_between_images(curr_frame, prev_frame)
+
+            # Open or lengthen window
+            if car_present and car_not_moving:
+                last_hit = 0
             elif last_hit < window:
-                # No vehicle present
                 last_hit += 1
 
             if last_hit < window:
-                # Get the best focused frame in window, only consider frames where no movement is detected
+                # Get the best focused frame in window (only frames where car is present and not moving are considered)
                 if last_hit == 0:
                     if best_frame is None:
                         best_frame = frame
@@ -647,8 +645,13 @@ class Detector:
                                              self.background_intensity_threshold)
             # Car motion is difference between subsequent frames
             motion = self.image_difference(prev_frame, curr_frame, self.motion_intensity_threshold)
+
             # Car blurriness is variance of Laplacian operator over dark areas of frame
-            blurriness = self.cached_laplacian_var(curr_frame)
+            if motion < self.motion_threshold and presence > self.background_threshold:
+                blurriness = self.cached_laplacian_var(curr_frame)
+            # No stopped car = zero focus
+            else:
+                blurriness = 0
 
             car_presence.append(presence)
             car_motion.append(motion)
