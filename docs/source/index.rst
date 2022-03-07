@@ -29,6 +29,7 @@ To build this documentation, you need ``Sphinx``, ``numpydoc`` and ``sphinx-rtd-
    treadscan.detector.InputType
    treadscan.detector.FrameExtractor
    treadscan.segmentor.Segmentor
+   treadscan.segmentor.RCNNSegmentor
    treadscan.extractor.Extractor
    treadscan.extractor.CameraPosition
    treadscan.utilities.Ellipse

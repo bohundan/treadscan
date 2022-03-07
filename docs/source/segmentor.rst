@@ -10,5 +10,8 @@ Segmentor
    :members:
 
 
+RCNNSegmentor
+-------------
+
 .. autoclass:: treadscan.segmentor.RCNNSegmentor
    :members:
