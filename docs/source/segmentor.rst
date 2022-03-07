@@ -8,3 +8,7 @@ Segmentor
 
 .. autoclass:: treadscan.segmentor.Segmentor
    :members:
+
+
+.. autoclass:: treadscan.segmentor.RCNNSegmentor
+   :members:
