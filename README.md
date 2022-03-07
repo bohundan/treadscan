@@ -9,12 +9,11 @@ This package provides utilities for extracting tire tread (pattern) from images,
 ![treadscan](https://raw.githubusercontent.com/bohundan/treadscan/master/docs/source/_static/treadscan.jpg)
 
 Three main classes are  
-`Detector` - picks out stopped cars from continoous footage (like at an intersection, under a traffic light).   
-`Segmentor` - finds ellipse defining car wheel in image (using image segmentation techniques).  
-`Extractor` - creates a tire model from the ellipse, then "unwraps" the tire tread (or rather part of the tire tread, as only about a quarter of the tread is visible).
+`treadscan.Detector` - picks out stopped cars from continoous footage (like at an intersection, under a traffic light).
+`treadscan.Segmentor` - finds ellipse defining car wheel in image (using image segmentation techniques).
+`treadscan.Extractor` - creates a tire model from the ellipse, then "unwraps" the tire tread (or rather part of the tire tread, as only about a quarter of the tread is visible).
 
-Currently `Segmentor` works correctly only if the car has bright wheels (rims).  But there is a way to also extract tire tread from images where this detection method fails, by manual input. In the `extras` folder, there is another module `annotator.py` containing the `Annotator` class and the script `manual_annotation.py` which uses it. The script `manual_annotation.py` takes an image as input, which it then allows the user to manually annotate.  
-The user places specific points over the image, which in turn creates the car wheel and tire model, from which the tire tread is then extracted as usual.
+There are 3 different ways to detect car wheels in image. Only `treadscan.Segmentor` is included in the `treadscan` package and works out of the box. This class has a major downfall and that is that it only has a chance to work correctly if the car in the image has very bright rims, which contrast enough with the tire. There is also `treadscan.RCNNSegmentor` which uses a region based convolutional neural network to find the car wheel in image but the `treadscan` package doesn't include a pre-trained model. You can however use [the model included in this repository](https://github.com/bohundan/treadscan/blob/master/RCNN_model/saved_model.pth) or even train your own. You will also need to install `torch` and `torchvision` libraries to use the RCNN. The last option is to annotate the image manually using a GUI script, `manual_annotation.py`, which is included in [this folder](https://github.com/bohundan/treadscan/tree/master/extras).
 
 ![manual annotation](https://raw.githubusercontent.com/bohundan/treadscan/master/docs/source/_static/manual_annotation.png)
 
