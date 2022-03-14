@@ -85,6 +85,9 @@ class Detector:
     background_sample : numpy.ndarray
         Grayscale image of the scene without a vehicle present (is used when detection vehicle presence).
 
+    frame_extractor : treadscan.FrameExtractor
+        Frame extractor used to get frames from input footage for detection.
+
     background_intensity_threshold : int
         Difference between pixels needed to be classified as 'not background'.
 
@@ -106,7 +109,10 @@ class Detector:
 
     Methods
     -------
-    detect(input_path: str, input_type: treadscan.InputType, scale: float, window: int)
+    set_input(input_path: str, input_type: treadscan.InputType)
+        Sets Detector.frame_extractor attribute.
+
+    detect(scale: float, window: int)
         Generator which yields one image per one stopped car. Uses a window, in which it detects car presence and
         whether it is moving or not. Window opens when a car is detected as stopped and closes when car starts moving
         again. The generator then yields the best focused (least blurry) frame from this window.
@@ -175,6 +181,9 @@ class Detector:
         # Blur to remove some noise
         self.background_sample = cv2.GaussianBlur(image, (5, 5), 0)
 
+        # Input footage
+        self.frame_extractor = None
+
         # Difference between pixels needed to be classified as 'not background'
         self.background_intensity_threshold = 50
         # Minimum percentage of 'not background' pixels to evaluate image as containing a vehicle
@@ -193,6 +202,21 @@ class Detector:
         self._background_for_processing = None
         # Downscale factor for faster processing
         self._scale = 0.25
+
+    def set_input(self, input_path: str, input_type: InputType):
+        """
+        Set input (footage from which to detect cars from). You can also access it through
+        treadscan.Detector.frame_extractor attribute.
+
+        Parameters
+        ----------
+        input_path : str
+            Path to video/stream or to folder containing images (sorted in sequence).
+
+        input_type : treadscan.InputType
+        """
+
+        self.frame_extractor = FrameExtractor(input_path, input_type)
 
     @staticmethod
     def _calc_kernel_size(image_width: int, image_height: int) -> (int, int):
@@ -242,18 +266,13 @@ class Detector:
 
         return image
 
-    def detect(self, input_path: str, input_type: InputType, scale: float = 0.25, window: int = 50) \
-            -> Generator[np.ndarray, None, None]:
+    def detect(self, scale: float = 0.25, window: int = 50) -> Generator[np.ndarray, None, None]:
         """
-        Generator which yields one frame for footage per one stopped car.
+        Generator which yields one frame for footage per one stopped car. Uses frame extractor set by
+        Detector.set_input() method.
 
         Parameters
         ----------
-        input_path : str
-            Path to video/stream or to folder containing images (sorted in sequence).
-
-        input_type : treadscan.InputType
-
         scale : float
             Rescales footage down (to speed up processing).
 
@@ -280,6 +299,9 @@ class Detector:
             If input frames have different resolution than the background sample.
         """
 
+        if self.frame_extractor is None:
+            raise RuntimeError('No input has been set (use treadscan.Detector.set_input() first).')
+
         if not 0 < scale <= 1:
             raise ValueError('Invalid scale factor (must be between 1 and 0).')
 
@@ -288,19 +310,18 @@ class Detector:
         blur_kernel = self._calc_kernel_size(int(width * scale), int(height * scale))
         self._background_for_processing = self._prep_image(self.background_sample, scale, blur_kernel)
 
-        frame_extractor = FrameExtractor(input_path, input_type)
         last_hit = window
         best_frame = None
 
         # Acquire first frame
-        prev_frame = frame_extractor.next_frame()
+        prev_frame = self.frame_extractor.next_frame()
         if prev_frame is None:
             raise RuntimeError('Failed fetching first frame from input.')
         if prev_frame.shape != self.background_sample.shape:
             raise RuntimeError('Footage and background sample have mismatched resolution.')
         prev_frame = self._prep_image(prev_frame, scale, blur_kernel)
 
-        frame = frame_extractor.next_frame()
+        frame = self.frame_extractor.next_frame()
         while frame is not None:
             # Process next frame
             if frame.shape != self.background_sample.shape:
@@ -330,7 +351,7 @@ class Detector:
 
             # Next frame
             prev_frame = curr_frame
-            frame = frame_extractor.next_frame()
+            frame = self.frame_extractor.next_frame()
 
         # Make sure to yield last frame if footage ends with window open
         if best_frame is not None:
@@ -568,19 +589,13 @@ class Detector:
         else:
             return image1
 
-    def get_full_detection_data(self, input_path: str, input_type: InputType, scale: float = 0.25, window: int = 50) \
-            -> (list, list, list):
+    def get_full_detection_data(self, scale: float = 0.25, window: int = 50) -> (list, list, list):
         """
         Create datasets from footage for analysis, visualisation or easier parameter selection (picking the perfect
         thresholds for example).
 
         Parameters
         ----------
-        input_path : str
-            Path to video/stream or to folder containing images (sorted in sequence).
-
-        input_type : treadscan.InputType
-
         scale : float
             Rescales footage down (to speed up processing).
 
@@ -607,12 +622,12 @@ class Detector:
             If failed to fetch first frame from footage.
 
             If input frames have different resolution than the background sample.
+
+            If no FrameExtractor has been set (use treadscan.Detector.set_input())
         """
 
-        car_presence = []
-        car_motion = []
-        car_blurriness = []
-        window_status = []
+        if self.frame_extractor is None:
+            raise RuntimeError('No input has been set (use treadscan.Detector.set_input() first).')
 
         if not 0 < scale <= 1:
             raise ValueError('Invalid scale factor (must be between 1 and 0).')
@@ -622,18 +637,21 @@ class Detector:
         blur_kernel = self._calc_kernel_size(int(width * scale), int(height * scale))
         self._background_for_processing = self._prep_image(self.background_sample, scale, blur_kernel)
 
-        frame_extractor = FrameExtractor(input_path, input_type)
-
         # Acquire first frame
-        prev_frame = frame_extractor.next_frame()
+        prev_frame = self.frame_extractor.next_frame()
         if prev_frame is None:
             raise RuntimeError('Failed fetching first frame from input.')
         if prev_frame.shape != self.background_sample.shape:
             raise RuntimeError('Footage and background sample have mismatched resolution.')
         prev_frame = self._prep_image(prev_frame, scale, blur_kernel)
 
+        car_presence = []
+        car_motion = []
+        car_blurriness = []
+        window_status = []
+
         last_hit = window
-        frame = frame_extractor.next_frame()
+        frame = self.frame_extractor.next_frame()
         while frame is not None:
             # Process next frame
             if frame.shape != self.background_sample.shape:
@@ -667,7 +685,7 @@ class Detector:
 
             # Next frame
             prev_frame = curr_frame
-            frame = frame_extractor.next_frame()
+            frame = self.frame_extractor.next_frame()
 
         return car_presence, car_motion, car_blurriness, window_status
 
@@ -689,6 +707,9 @@ class FrameExtractor:
 
     video : cv2.VideoCapture
         Loaded video/stream (when using video input).
+
+    end : Union[int, None]
+        Index of last frame to be extracted (when using treadscan.InputType.IMAGE_FOLDER).
 
     Methods
     -------
@@ -727,6 +748,8 @@ class FrameExtractor:
         self.input_type = input_type
         self.frame_index = 0
 
+        self.end = None
+
     def next_frame(self) -> Union[np.ndarray, None]:
         """
         Gets the next frame from input, converts it to grayscale and returns it.
@@ -742,7 +765,8 @@ class FrameExtractor:
         # Folder of images
         if self.input_type == InputType.IMAGE_FOLDER:
             if self.frame_index >= len(self.files):
-                # At the end
+                return None
+            elif self.end and self.frame_index > self.end:
                 return None
             else:
                 # Increment and return next frame
@@ -761,3 +785,34 @@ class FrameExtractor:
                 # Increment and return next frame
                 self.frame_index += 1
                 return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+    def set_folder_bounds(self, start: Union[int, None] = None, end: Union[int, None] = None):
+        """
+        Set start and/or end index of images in image folder.
+
+        Parameters
+        ----------
+        start : Union[int, None]
+            Index of first frame.
+
+        end : Union[int, None]
+            Index of last frame.
+
+        Raises
+        ------
+        RuntimeError
+            When trying to set bounds but FrameExtractor doesn't have folder as treadscan.InputType.
+
+        ValueError
+            When end > start.
+        """
+
+        if self.input_type != InputType.IMAGE_FOLDER:
+            raise RuntimeError('Cannot set start or end index for this input type.')
+
+        if start is not None and end is not None and start > end:
+            raise ValueError('Start index is greater than end index.')
+
+        self.end = end
+        if start is not None:
+            self.frame_index = start
