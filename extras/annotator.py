@@ -5,6 +5,7 @@ for example if treadscan Segmentor fails (like when wheel is too dark) to detect
 
 from datetime import datetime
 from math import sqrt, asin, degrees, atan, radians
+import json
 from typing import Union
 import sys
 
@@ -100,18 +101,20 @@ class Annotator:
             Image on which to draw annotation points.
         """
 
+        point_size = 4
+
         # Unused points are drawn in top left corner in one column
         y_pos = 8
         for key, value in self.points.items():
             if value is not None:
                 # Point is set, draw it where it is set
-                cv2.circle(image, value, 8, (0, 128, 255), -1)
+                cv2.circle(image, value, point_size, (0, 128, 255), -1)
                 point = (value[0] - 4, value[1] + 4)
                 cv2.putText(image, chr(key), point, cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5, color=(0, 0, 0),
                             thickness=1)
             else:
                 # Point is not set, draw it at the bottom of the column
-                cv2.circle(image, (4, y_pos), 8, (0, 128, 255), -1)
+                cv2.circle(image, (4, y_pos), point_size, (0, 128, 255), -1)
                 cv2.putText(image, chr(key), (0, y_pos + 4), cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5,
                             color=(0, 0, 0), thickness=1)
                 y_pos += 16
@@ -343,6 +346,8 @@ class Annotator:
         top = self.points[ord('t')]
         bottom = self.points[ord('b')]
         right = self.points[ord('r')]
+        sidewall = self.points[ord('s')]
+        width = self.points[ord('w')]
 
         # Make sure top is above bottom
         if top and bottom and top[1] > bottom[1]:
@@ -391,11 +396,46 @@ class Annotator:
             cv2.line(image, ellipse.get_center(), right, (255, 255, 0), thickness=1)
             cv2.line(image, top, bottom, (255, 255, 0), thickness=1)
 
-            # Draw bounding box
-            cv2.rectangle(image, *ellipse.bounding_box(), (255, 255, 0), thickness=2)
+            # Sidewall height and tire width are set
+            if sidewall and width:
+                # Find if sidewall point is closer to top or bottom point
+                distance_to_top = abs(top[1] - sidewall[1])
+                distance_to_bottom = abs(bottom[1] - sidewall[1])
 
-            self.draw_only_annotation_points(image)
-            return True
+                # Make sure sidewall is outside of main ellipse
+                if top[1] - 10 < sidewall[1] < bottom[1] + 10:
+                    if distance_to_top < distance_to_bottom:
+                        sidewall = sidewall[0], top[1] - 10
+                    else:
+                        sidewall = sidewall[0], bottom[1] + 10
+                    self.points[ord('s')] = sidewall
+                # Make sure tire width is not negative
+                if width[0] < right[0] + 10:
+                    width = right[0] + 10, width[1]
+                    self.points[ord('w')] = width
+
+                # Create bounding box accounting for sidewall and tire width
+                if distance_to_top < distance_to_bottom:
+                    sidewall_height = abs(top[1] - sidewall[1])
+                else:
+                    sidewall_height = abs(bottom[1] - sidewall[1])
+                tire_width = abs(right[0] - width[0])
+
+                bbox = ellipse.bounding_box()
+                top_left, bottom_right = bbox[0], bbox[1]
+
+                tire_height = ellipse.height + sidewall_height * 2
+                size_coefficient = tire_height / ellipse.height
+                outer_width = int(ellipse.width * size_coefficient)
+
+                top_left = top_left[0] - abs(outer_width - ellipse.width) // 2, top_left[1] - sidewall_height
+                bottom_right = bottom_right[0] + tire_width, bottom_right[1] + sidewall_height
+
+                # Draw bounding box
+                cv2.rectangle(image, top_left, bottom_right, (255, 255, 0), thickness=2)
+
+                self.draw_only_annotation_points(image)
+                return True
 
         self.draw_only_annotation_points(image)
         return False
@@ -432,6 +472,8 @@ class Annotator:
             ord('t'): None,  # Top
             ord('b'): None,  # Bottom
             ord('r'): None,  # Right
+            ord('s'): None,  # Tire sidewall
+            ord('w'): None   # Tire width
         }
 
         def mouse_callback(event, x, y, flags, param):
@@ -449,22 +491,46 @@ class Annotator:
             top = self.points[ord('t')]
             bottom = self.points[ord('b')]
             right = self.points[ord('r')]
+            sidewall = self.points[ord('s')]
+            width = self.points[ord('w')]
 
             # Reset keypoints
             self.points = {
                 ord('t'): None,  # Top
                 ord('b'): None,  # Bottom
                 ord('r'): None,  # Right
+                ord('s'): None,  # Tire sidewall
+                ord('w'): None   # Tire width
             }
             # Keep drawn ellipse
             self.image = image
 
             # Save points and bounding box
-            top = int(top[0] / self.scale), int(top[1] / self.scale)
-            bottom = int(bottom[0] / self.scale), int(bottom[1] / self.scale)
-            right = int(right[0] / self.scale), int(right[1] / self.scale)
-            keypoints.append([top, bottom, right])
-            bounding_boxes.append(ellipse_from_points(top, bottom, right).bounding_box())
+            top = int(top[0] / self.scale), int(top[1] / self.scale), 1
+            bottom = int(bottom[0] / self.scale), int(bottom[1] / self.scale), 1
+            right = int(right[0] / self.scale), int(right[1] / self.scale), 1
+            sidewall = int(sidewall[0] / self.scale), int(sidewall[1] / self.scale), 1
+            width = int(width[0] / self.scale), int(width[1] / self.scale), 1
+
+            ellipse = ellipse_from_points(top, bottom, right)
+            bbox = ellipse.bounding_box()
+            # Extend bounding box to entire tire
+            top_left, bottom_right = bbox[0], bbox[1]
+            distance_to_top = abs(top[1] - sidewall[1])
+            distance_to_bottom = abs(bottom[1] - sidewall[1])
+            if distance_to_top < distance_to_bottom:
+                sidewall_height = abs(top[1] - sidewall[1])
+            else:
+                sidewall_height = abs(bottom[1] - sidewall[1])
+            tire_width = abs(right[0] - width[0])
+            tire_height = ellipse.height + sidewall_height * 2
+            size_coefficient = tire_height / ellipse.height
+            outer_width = int(ellipse.width * size_coefficient)
+            top_left = top_left[0] - abs(outer_width - ellipse.width) // 2, top_left[1] - sidewall_height
+            bottom_right = bottom_right[0] + tire_width, bottom_right[1] + sidewall_height
+
+            keypoints.append([top, bottom, right, sidewall, width])
+            bounding_boxes.append([*top_left, *bottom_right])
 
         while True:
             # Start with clean image
@@ -505,23 +571,8 @@ class Annotator:
         cv2.destroyAllWindows()
 
         if submitted and keypoints and bounding_boxes:
-            # Construct list of bounding boxes
-            bbox_string = '['
-            for bbox in bounding_boxes:
-                top_left, bottom_right = bbox
-                bbox_string += f'[{top_left[0]}, {top_left[1]}, {bottom_right[0]}, {bottom_right[1]}]'
-                bbox_string += ', '
-            bbox_string = bbox_string[:-2] + ']'
-
-            # Construct list of keypoints
-            keypoint_string = '['
-            for points in keypoints:
-                t, b, r = points
-                keypoint_string += f'[[{t[0]}, {t[1]}, 1], [{b[0]}, {b[1]}, 1], [{r[0]}, {r[1]}, 1]]'
-                keypoint_string += ', '
-            keypoint_string = keypoint_string[:-2] + ']'
-
-            return '{"bboxes": ' + bbox_string + ', "keypoints": ' + keypoint_string + '}'
+            annotations = {'bboxes': bounding_boxes, 'keypoints': keypoints}
+            return json.dumps(annotations)
         else:
             return ''
 

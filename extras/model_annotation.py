@@ -3,6 +3,7 @@ This module can be run as a script from a command line, for arguments, see --hel
 """
 
 from argparse import ArgumentParser
+import os
 from pathlib import Path
 
 import cv2
@@ -38,7 +39,7 @@ def main(filename: str, max_width: int, max_height: int, flipped: bool, rescale:
     # Rescale keypoints in json file
     if path.suffix == '.json':
         if rescale != 1:
-            print('NOT IMPLEMENTED')
+            print('KEYPOINT RESCALING NOT IMPLEMENTED')
         else:
             print('You need to provide an image (without .json suffix) or rescale keypoints by different factor than 1')
     # Else annotate keypoints and write to json file
@@ -47,27 +48,37 @@ def main(filename: str, max_width: int, max_height: int, flipped: bool, rescale:
             print('Maximum width or height is too small.')
             return
 
-        # Annotate image
-        original_image = cv2.imread(filename, cv2.IMREAD_GRAYSCALE)
-        annotator = Annotator(original_image, max_width, max_height, flipped)
-        result = annotator.annotate_keypoints()
+        if path.is_dir():
+            filenames = [str(f) for f in path.iterdir() if f.is_file()]
+            filenames.sort()
+        else:
+            filenames = [filename]
 
-        # If user submitted annotation
-        if result:
-            if flipped:
-                image = cv2.flip(original_image, 1)
-            else:
-                image = original_image
+        for filename in filenames:
+            # Annotate images
+            original_image = cv2.imread(filename, cv2.IMREAD_GRAYSCALE)
+            annotator = Annotator(original_image, max_width, max_height, flipped)
+            result = annotator.annotate_keypoints()
 
-            Path('images').mkdir(parents=True, exist_ok=True)
-            Path('annotations').mkdir(parents=True, exist_ok=True)
+            # If user submitted annotation
+            if result:
+                if flipped:
+                    image = cv2.flip(original_image, 1)
+                else:
+                    image = original_image
 
-            stem = path.stem
-            # Write image to images folder
-            cv2.imwrite(f'images/{stem}.jpg', image)
-            # Write annotation to annotations folder
-            with open(f'annotations/{stem}.json', 'w') as json_file:
-                json_file.write(result)
+                images_folder = 'images_'
+                annotations_folder = 'annotations_'
+
+                Path(images_folder).mkdir(parents=True, exist_ok=True)
+                Path(annotations_folder).mkdir(parents=True, exist_ok=True)
+
+                stem = Path(filename).stem
+                # Write image to images folder
+                cv2.imwrite(f'{images_folder}/{stem}.jpg', image)
+                # Write annotation to annotations folder
+                with open(f'{annotations_folder}/{stem}.json', 'w') as json_file:
+                    json_file.write(result)
 
 
 def parse_filename(parser: ArgumentParser, arg: str):
@@ -76,7 +87,7 @@ def parse_filename(parser: ArgumentParser, arg: str):
 
     Parameters
     ----------
-    parser : argparseArgumentParser
+    parser : ArgumentParser
 
     arg : str
         Filename to check.
@@ -84,23 +95,44 @@ def parse_filename(parser: ArgumentParser, arg: str):
     Returns
     -------
     None
-        If file doesn't exist.
+        If file or folder doesn't exist.
 
     str
-        Filename if file exists and is readable.
+        Filename if file or folder exists and is readable.
     """
 
-    try:
-        file = open(arg, 'r')
-    except IOError:
-        parser.error(f'The file {arg} does not exist!')
-        return
+    path = Path(arg)
 
-    file.close()
-    return arg
+    # Directory
+    if path.is_dir():
+        files = [str(f) for f in path.iterdir() if f.is_file()]
+
+        if len(files) == 0:
+            parser.error(f'Folder {arg} is empty!')
+            return
+        try:
+            print(files[0])
+            file = open(files[0], 'r')
+        except IOError:
+            parser.error(f'Files in {arg} are not readable!')
+            return
+
+        file.close()
+        return arg
+
+    # One file
+    else:
+        try:
+            file = open(arg, 'r')
+        except IOError:
+            parser.error(f'The file {arg} does not exist!')
+            return
+
+        file.close()
+        return arg
 
 arg_parser = ArgumentParser(description='Manually create tire bounding ellipses for tread extraction.')
-arg_parser.add_argument('-i', dest='filename', required=True, help='input image for annotation', metavar='FILE',
+arg_parser.add_argument('-i', dest='filename', required=True, help='input image for annotation', metavar='FILE/FOLDER',
                         type=lambda x: parse_filename(arg_parser, x))
 arg_parser.add_argument('--width', dest='width', required=False, help='maximum width of annotation window',
                         metavar='NUMBER', type=int, default=1800)
