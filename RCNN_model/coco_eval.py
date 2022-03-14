@@ -22,7 +22,7 @@ class CocoEvaluator:
             coco_eval = COCOeval(coco_gt, iouType=iou_type)
             # Change kpt_oks_sigmas to be the same length as the number of keypoints
             # These values are used during evalution of keypoint precision/recall, see http://cocodataset.org/#keypoints-eval
-            coco_eval.params.kpt_oks_sigmas = np.array([0.3, 0.3, 0.3])
+            coco_eval.params.kpt_oks_sigmas = np.array([0.02, 0.02, 0.02, 0.03, 0.05])
             self.coco_eval[iou_type] = coco_eval
 
         self.img_ids = []
