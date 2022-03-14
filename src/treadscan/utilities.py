@@ -1,8 +1,8 @@
 """
 This module contains various useful methods that can be used in multiple different places.
 """
-import sys
-from math import atan, cos, sin, degrees, radians, sqrt
+
+from math import atan, cos, sin, degrees, radians, sqrt, pi
 from os.path import isfile
 
 import cv2
@@ -124,6 +124,36 @@ class Ellipse:
 
         return x, y
 
+    def angle_on_ellipse(self, x: int, y: int) -> float:
+        """
+        Approximate angle which gives the closest point on the right side of ellipse to provided point.
+
+        Parameters
+        ----------
+        x : int
+            X coordinate of point.
+        y : int
+            Y coordinate of point.
+
+        Returns
+        -------
+        float
+            Angle approximation (the closest point on the right side ellipse).
+        """
+
+        best_dist = float('inf')
+        best_angle = 0
+
+        # O(n) algorithm, the formula for inverse self.point_on_ellipse() is incomprehensible
+        for angle in np.arange(-90, 90, 0.25):
+            x_, y_ = self.point_on_ellipse(angle)
+            dist = np.sqrt((x - x_)**2 + (y - y_)**2)
+            if dist < best_dist:
+                best_dist = dist
+                best_angle = angle
+
+        return best_angle
+
     def bounding_box(self) -> list:
         """
         Create bounding box around ellipse. Compatible with OpenCV's cv2.rectangle() drawing operation (returns points
@@ -161,6 +191,18 @@ class Ellipse:
         """
 
         return [(self.cx, self.cy), (self.width // 2, self.height // 2), self.angle, start, end]
+
+    def area(self) -> float:
+        """
+        Calculate area of ellipse.
+
+        Returns
+        -------
+        float
+            Area of ellipse.
+        """
+
+        return pi * (self.height / 2) * (self.width / 2)
 
 
 def ellipse_from_points(top: (int, int), bottom: (int, int), right: (int, int)) -> Ellipse:

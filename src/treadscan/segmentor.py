@@ -12,6 +12,10 @@ from typing import Union
 import cv2
 import improutils
 import numpy as np
+import torch
+from torchvision.models.detection import keypointrcnn_resnet50_fpn
+from torchvision.models.detection.rpn import AnchorGenerator
+from torchvision.transforms import functional
 
 from .utilities import Ellipse, ellipse_from_points
 
@@ -50,13 +54,9 @@ class RCNNSegmentor:
             https://github.com/bohundan/treadscan/blob/master/RCNN_model/saved_model.pth.
         """
 
-        import torch
-        from torchvision.models.detection import keypointrcnn_resnet50_fpn
-        from torchvision.models.detection.rpn import AnchorGenerator
-
         anchor_generator = AnchorGenerator(sizes=(32, 64, 128, 256, 512),
                                            aspect_ratios=(0.25, 0.5, 0.75, 1.0, 2.0, 3.0, 4.0))
-        self.model = keypointrcnn_resnet50_fpn(pretrained=False, pretrained_backbone=True, num_keypoints=3,
+        self.model = keypointrcnn_resnet50_fpn(pretrained=False, pretrained_backbone=True, num_keypoints=5,
                                                num_classes=2, rpn_anchor_generator=anchor_generator)
 
         self.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
@@ -64,17 +64,21 @@ class RCNNSegmentor:
         self.model.load_state_dict(torch.load(path_to_trained_rcnn_model, map_location=self.device))
         self.model.eval()
 
-    def find_ellipse(self, image: np.ndarray) -> Union[Ellipse, None]:
+    def find_ellipse(self, image: np.ndarray, confidence_threshold: float = 0.8) -> Union[tuple, None]:
         """
         Parameters
         ----------
         image : numpy.ndarray
             Grayscale or BGR image on which processing operations will be performed.
 
+        confidence_threshold : float
+            Minimum confidence of RCNN model in its prediction to be considered valid.
+
         Returns
         -------
-        treadscan.Ellipse
-            Ellipse defined by center coordinates, size and rotation (in degrees).
+        (treadscan.Ellipse, int, (int, int))
+            Ellipse defined by center coordinates, size and rotation (in degrees), tire sidewall height and tire limit
+            (point on inner - right side of tire)
 
         None
             If no ellipse was found.
@@ -84,9 +88,6 @@ class RCNNSegmentor:
         ValueError
             If image has invalid resolution.
         """
-
-        import torch
-        from torchvision.transforms import functional
 
         if image.shape[0] == 0 or image.shape[1] == 0:
             raise ValueError('Image is zero pixels tall/wide.')
@@ -104,6 +105,7 @@ class RCNNSegmentor:
             output = self.model(tensor)
 
         scores = output[0]['scores'].detach().cpu().numpy()
+        scores = [score for score in scores if score > confidence_threshold]
 
         # No hits
         if len(scores) == 0:
@@ -111,14 +113,30 @@ class RCNNSegmentor:
         else:
             # Detections are sorted by score, highest is first
             best = 0
+            best_score = -1
 
-            # Get keypoints from output
+            # Compare first 3 best models
+            for i in range(0, min(len(scores), 3)):
+                # Create ellipse from detected keypoints
+                keypoints = []
+                for point in output[0]['keypoints'][i].detach().cpu().numpy():
+                    keypoints.append((int(point[0]), int(point[1])))
+                ellipse = ellipse_from_points(keypoints[0], keypoints[1], keypoints[2])
+
+                # Calculate score of modelled ellipse (confidence * ellipse height)
+                score = scores[i] * ellipse.height
+                if score > best_score:
+                    best_score = score
+                    best = i
+
+            # Return best ellipse
             keypoints = []
             for point in output[0]['keypoints'][best].detach().cpu().numpy():
                 keypoints.append((int(point[0]), int(point[1])))
+            ellipse = ellipse_from_points(keypoints[0], keypoints[1], keypoints[2])
+            sidewall = int(np.sqrt((keypoints[0][0] - keypoints[3][0])**2 + (keypoints[0][1] - keypoints[3][1])**2))
 
-            ellipse = ellipse_from_points(*keypoints)
-            return ellipse
+            return ellipse, sidewall, keypoints[4]
 
 
 class Segmentor:

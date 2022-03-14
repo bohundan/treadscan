@@ -221,8 +221,8 @@ class Extractor:
 
         return x_, y_
 
-    def get_tire_bounding_ellipses(self, tire_width: int = 0, tire_sidewall: int = 0, outer_extend: int = 0) \
-            -> (Ellipse, Ellipse):
+    def get_tire_bounding_ellipses(self, tire_width: int = 0, tire_sidewall: int = 0, outer_extend: int = 0,
+                                   tire_limit: Union[tuple, None] = None) -> (Ellipse, Ellipse):
         """
         Create and return outer and inner ellipses surrounding car tire.
 
@@ -242,6 +242,9 @@ class Extractor:
             If non-zero, extend outer ellipse (outwards) by this much. To make sure that entirety of tire tread is
             visible between bounding ellipses.
 
+        tire_limit : Union[tuple, None]
+            Optional point on the inner side of tire, giving the tire_width.
+
         Returns
         -------
         (treadscan.Ellipse, treadscan.Ellipse)
@@ -252,6 +255,11 @@ class Extractor:
             raise ValueError('Tire width has to be greater than 0.')
         if tire_sidewall < 0:
             raise ValueError('Tire sidewall has to be greater than 0.')
+
+        if tire_width != 0 and tire_limit is not None:
+            raise ValueError('Tire width and tire limit are both set, use only one of these parameters to set width.')
+        if tire_limit is not None and len(tire_limit) != 2:
+            raise ValueError('Tire limit must be a point, a tuple of integers.')
 
         # Calculate angle of wheel from ratio of ellipse axes, clip between -1 and 1 for arccos (ellipse should always
         # be taller rather than wider anyway)
@@ -327,6 +335,15 @@ class Extractor:
 
         # Shift inner ellipse by tire_width
         inner_ellipse = perspective_shift_ellipse(tire_ellipse, tire_width)
+        # If tire_limit is set, use it to calculate tire_width
+        if tire_limit is not None:
+            angle = inner_ellipse.angle_on_ellipse(*tire_limit)
+            point = inner_ellipse.point_on_ellipse(angle)
+            # Adjust tire width to closer fit tire_limit
+            one = 1 if tire_limit[0] > point[0] else -1
+            tire_width += one * int(abs(np.sqrt((tire_limit[0] - point[0])**2 + (tire_limit[1] - point[1])**2)))
+            # New inner_ellipse
+            inner_ellipse = perspective_shift_ellipse(tire_ellipse, tire_width)
 
         # Shift outer ellipse (in the opposite direction) by outer_extend
         outer_ellipse = perspective_shift_ellipse(tire_ellipse, -outer_extend)
