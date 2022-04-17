@@ -54,8 +54,8 @@ class RCNNSegmentor:
             https://github.com/bohundan/treadscan/blob/master/RCNN_model/saved_model.pth.
         """
 
-        anchor_generator = AnchorGenerator(sizes=(32, 64, 128, 256, 512),
-                                           aspect_ratios=(0.25, 0.5, 0.75, 1.0, 2.0, 3.0, 4.0))
+        anchor_generator = AnchorGenerator(sizes=(100, 250, 400, 650, 800),
+                                           aspect_ratios=(1.0, 1.25, 1.5, 1.75, 2.0))
         self.model = keypointrcnn_resnet50_fpn(pretrained=False, pretrained_backbone=True, num_keypoints=5,
                                                num_classes=2, rpn_anchor_generator=anchor_generator)
 
