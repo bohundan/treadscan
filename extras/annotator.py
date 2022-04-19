@@ -328,7 +328,7 @@ class Annotator:
 
     def draw_keypoints(self, image: np.ndarray) -> bool:
         """
-        Draws only 3 points of main ellipse (car wheel ellipse).
+        Draws 5 keypoints over image.
 
         Parameters
         ----------
@@ -445,20 +445,25 @@ class Annotator:
         Shows a cv2 window, uses same control scheme as Annotator.annotate(), except this method creates a JSON string
         consisting of bounding box (top left and bottom right coordinates) and keypoint coordinates.
 
-        3 keypoints corresponding to the 'T', 'B' and 'R' keys must be labeled:
+        5 keypoints corresponding to the 'T', 'B', 'R', 'S' and 'W' keys must be labeled:
 
             'T' : Top of car wheel (without tire sidewall).
 
             'B' : Bottom of car wheel (without tire sidewall).
 
             'R' : Right (closest) side of car wheel (without tire sidewall). Image should be flipped the other way
-                  around if labeling the car's left side wheels. Refer to treadscan.extractor.CameraPosition.
+                  around by 'F' if labeling the car's left side wheels. Refer to treadscan.extractor.CameraPosition.
+
+            'S' : Top of tire (top of car wheel extended by tire sidewall height)
+
+            'W' : Point on inner side of tire, gives the width
 
         Together, these keypoints can be used to create an ellipse, which defines the car wheel. This method can be used
         to create annotation for training a model for car wheel detection.
 
-        Use spacebar to save 3 keypoints. You can create multiple ellipses by continuing with annotation after pressing
-        spacebar. Use enter to submit keypoints (ellipses).
+        Use spacebar to save 5 keypoints. You can create multiple ellipses by continuing with annotation after pressing
+        spacebar. To verify your accuracy use 'P' to look at preview of what the extracted tread looks like. Preview
+        can be hidden using backspace. Use enter to submit keypoints (ellipses).
 
         Returns
         -------
@@ -532,9 +537,22 @@ class Annotator:
             keypoints.append([top, bottom, right, sidewall, width])
             bounding_boxes.append([*top_left, *bottom_right])
 
+        tread = None
         while True:
             # Start with clean image
             image = self.image.copy()
+            # If tread preview exists, show it in upper right corner
+            if tread is not None:
+                h1, w1 = image.shape[0], image.shape[1]
+                h2, w2 = tread.shape[0], tread.shape[1]
+                if h2 > h1 or w2 > w1:
+                    # If preview wouldn't fit, scale it down
+                    scale = min(w1 / w2, h1 / h2)
+                    scale = min(scale, 1)
+                    tread = scale_image(tread, scale)
+                    h2, w2 = tread.shape[0], tread.shape[1]
+
+                image[0:h2, w1 - w2:w1, :] = tread[0:h2, 0:w2, :]
             # Draw points
             success = self.draw_keypoints(image)
 
@@ -554,6 +572,26 @@ class Annotator:
                     save_keypoints()
                 submitted = True
                 break
+
+            # P to show tread preview
+            elif key == ord('p'):
+                if success:
+                    top = self.points[ord('t')]
+                    bottom = self.points[ord('b')]
+                    right = self.points[ord('r')]
+                    sidewall = self.points[ord('s')]
+                    width = self.points[ord('w')]
+
+                    ellipse = ellipse_from_points(top, bottom, right)
+                    sidewall = int(np.sqrt((top[0] - sidewall[0]) ** 2 + (top[1] - sidewall[1]) ** 2))
+
+                    extractor = Extractor(self.image, ellipse)
+                    bounding_ellipses = extractor.get_tire_bounding_ellipses(tire_sidewall=sidewall, tire_limit=width)
+                    tread = extractor.extract_tread(tire_bounding_ellipses=bounding_ellipses)
+
+            # Backspace to hide preview
+            elif key == 8 and tread is not None:
+                tread = None
 
             # An annotating key was pressed
             elif key != -1 and key in self.points.keys():
