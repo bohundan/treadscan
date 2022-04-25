@@ -1,18 +1,19 @@
 """
 This module contains the Annotator class which can be used to obtain ellipse which defines the car wheel (and tire),
 for example if treadscan Segmentor fails (like when wheel is too dark) to detect the main ellipse.
+
+Annotator class also contains a method for annotating keypoints of the tire.
 """
 
 from datetime import datetime
-from math import sqrt, asin, degrees, atan, radians
 import json
-from typing import Union
+from typing import Optional
 import sys
 
 import cv2
 import numpy as np
 from treadscan.extractor import Extractor, CameraPosition
-from treadscan.utilities import Ellipse, ellipse_from_points, scale_image
+from treadscan.utilities import Ellipse, ellipse_from_points, euclidean_dist, rotate_point, scale_image
 
 
 class Annotator:
@@ -101,25 +102,25 @@ class Annotator:
             Image on which to draw annotation points.
         """
 
-        point_size = 4
+        point_size = 5
 
         # Unused points are drawn in top left corner in one column
         y_pos = 8
         for key, value in self.points.items():
             if value is not None:
                 # Point is set, draw it where it is set
-                cv2.circle(image, value, point_size, (0, 128, 255), -1)
+                cv2.circle(image, value, point_size, (0, 128, 255), cv2.FILLED, lineType=cv2.LINE_AA)
                 point = (value[0] - 4, value[1] + 4)
                 cv2.putText(image, chr(key), point, cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5, color=(0, 0, 0),
-                            thickness=1)
+                            thickness=1, lineType=cv2.LINE_AA)
             else:
                 # Point is not set, draw it at the bottom of the column
-                cv2.circle(image, (4, y_pos), point_size, (0, 128, 255), -1)
+                cv2.circle(image, (4, y_pos), point_size, (0, 128, 255), cv2.FILLED, lineType=cv2.LINE_AA)
                 cv2.putText(image, chr(key), (0, y_pos + 4), cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5,
-                            color=(0, 0, 0), thickness=1)
+                            color=(0, 0, 0), thickness=1, lineType=cv2.LINE_AA)
                 y_pos += 16
 
-    def draw_points(self, image: np.ndarray) -> Union[None, tuple]:
+    def draw_points(self, image: np.ndarray) -> Optional[tuple]:
         """
         Draws points over image, builds ellipse parameters and bounding ellipses.
 
@@ -199,10 +200,10 @@ class Annotator:
 
         # All 3 main points have been set, ellipses can be constructed
         if top and bottom and right:
-            # Ellipse has to be taller rather than wide
+            # Ellipse has to be taller rather than wider (use Euclidean distance)
             cx, cy = (bottom[0] + top[0]) / 2, (bottom[1] + top[1]) / 2
-            h = sqrt((bottom[0] - top[0])**2 + (bottom[1] - top[1])**2)
-            w = 2 * sqrt((right[0] - cx)**2 + (right[1] - cy)**2)
+            h = euclidean_dist(top, bottom)
+            w = 2 * euclidean_dist(right, (cx, cy))
             # Avoid division by zero
             w += (sys.float_info.epsilon if w == 0.0 else 0)
             # If ellipse is wider than taller, move right point closer to center (on circle perimeter) along its axis
@@ -237,17 +238,17 @@ class Annotator:
                 return None
 
             # Draw main ellipse
-            cv2.ellipse(image, *ellipse.cv2_ellipse(), thickness=2, color=(0, 0, 255))
+            cv2.ellipse(image, *ellipse.cv2_ellipse(), thickness=2, color=(0, 0, 255), lineType=cv2.LINE_AA)
             cv2.circle(image, ellipse.get_center(), 5, (0, 0, 255), -1)
             # Draw lines between top and bottom and center and right point
-            cv2.line(image, ellipse.get_center(), right, (255, 255, 0), thickness=1)
-            cv2.line(image, top, bottom, (255, 255, 0), thickness=1)
+            cv2.line(image, ellipse.get_center(), right, (255, 255, 0), thickness=1, lineType=cv2.LINE_AA)
+            cv2.line(image, top, bottom, (255, 255, 0), thickness=1, lineType=cv2.LINE_AA)
 
             # Calculate start angle
             if start:
                 y = (start[1] - outer.cy) / (outer.height / 2)
                 y = np.clip(y, -1, 1)
-                start_angle = degrees(asin(y))
+                start_angle = np.degrees(np.arcsin(y))
             else:
                 start_angle = self._default_start_angle
 
@@ -255,7 +256,7 @@ class Annotator:
             if end:
                 y = (end[1] - outer.cy) / (outer.height / 2)
                 y = np.clip(y, -1, 1)
-                end_angle = degrees(asin(y))
+                end_angle = np.degrees(np.arcsin(y))
             else:
                 end_angle = self._default_end_angle
 
@@ -281,15 +282,17 @@ class Annotator:
             end_b = int(end_b[0]), int(end_b[1])
 
             # Draw lines marking tread area
-            cv2.line(image, start_a, start_b, thickness=2, color=(0, 255, 0))
-            cv2.line(image, end_a, end_b, thickness=2, color=(0, 255, 0))
+            cv2.line(image, start_a, start_b, thickness=2, color=(0, 255, 0), lineType=cv2.LINE_AA)
+            cv2.line(image, end_a, end_b, thickness=2, color=(0, 255, 0), lineType=cv2.LINE_AA)
 
             # Draw bounding ellipses
-            cv2.ellipse(image, *outer.cv2_ellipse(), thickness=2, color=(0, 255, 255))
-            cv2.ellipse(image, *inner.cv2_ellipse(-90, 90), thickness=2, color=(0, 255, 255))
+            cv2.ellipse(image, *outer.cv2_ellipse(), thickness=2, color=(0, 255, 255), lineType=cv2.LINE_AA)
+            cv2.ellipse(image, *inner.cv2_ellipse(-90, 90), thickness=2, color=(0, 255, 255), lineType=cv2.LINE_AA)
             # Once again edges of tread area in different color
-            cv2.ellipse(image, *outer.cv2_ellipse(start_angle, end_angle), thickness=2, color=(0, 255, 0))
-            cv2.ellipse(image, *inner.cv2_ellipse(start_angle, end_angle), thickness=2, color=(0, 255, 0))
+            cv2.ellipse(image, *outer.cv2_ellipse(start_angle, end_angle), thickness=2, color=(0, 255, 0),
+                        lineType=cv2.LINE_AA)
+            cv2.ellipse(image, *inner.cv2_ellipse(start_angle, end_angle), thickness=2, color=(0, 255, 0),
+                        lineType=cv2.LINE_AA)
 
             # Move annotation points of start and end angles over to outer bounding ellipse
             # This is a real headache, since the same points are used to calculate the start angles earlier and
@@ -367,18 +370,24 @@ class Annotator:
         self.__prev_top = top
         self.__prev_bottom = bottom
 
-        # All 3 main points have been set, ellipses can be constructed
+        # All 3 main points have been set, ellipse can be constructed
         if top and bottom and right:
-            # Ellipse has to be taller rather than wide
+            # Ellipse has to be taller rather than wider (use Euclidean distance)
             cx, cy = (bottom[0] + top[0]) / 2, (bottom[1] + top[1]) / 2
-            h = sqrt((bottom[0] - top[0]) ** 2 + (bottom[1] - top[1]) ** 2)
-            w = 2 * sqrt((right[0] - cx) ** 2 + (right[1] - cy) ** 2)
+            h = euclidean_dist(top, bottom)
+            w = 2 * euclidean_dist(right, (cx, cy))
             # Avoid division by 0
             w += (sys.float_info.epsilon if w == 0.0 else 0)
             # If ellipse is wider than taller, move right point closer to center (on circle perimeter) along its axis
             if int(w) > int(h):
                 t = h / w
                 right = int((1 - t) * cx + t * right[0]), int((1 - t) * cy + t * right[1])
+                self.points[ord('r')] = right
+            # Make sure that ellipse isn't a line (third point doesn't lie between top and bottom)
+            epsilon = 1
+            if -epsilon < (euclidean_dist(top, right) +
+                           euclidean_dist(right, bottom) -
+                           euclidean_dist(top, bottom)) < epsilon:
                 self.points[ord('r')] = right
 
             # Create ellipse from 3 main points
@@ -390,11 +399,11 @@ class Annotator:
                 return False
 
             # Draw main ellipse
-            cv2.ellipse(image, *ellipse.cv2_ellipse(), thickness=2, color=(0, 0, 255))
+            cv2.ellipse(image, *ellipse.cv2_ellipse(), thickness=2, color=(0, 0, 255), lineType=cv2.LINE_AA)
             cv2.circle(image, ellipse.get_center(), 3, (0, 0, 255), -1)
             # Draw lines between top and bottom and center and right point
-            cv2.line(image, ellipse.get_center(), right, (255, 255, 0), thickness=1)
-            cv2.line(image, top, bottom, (255, 255, 0), thickness=1)
+            cv2.line(image, ellipse.get_center(), right, (255, 255, 0), thickness=1, lineType=cv2.LINE_AA)
+            cv2.line(image, top, bottom, (255, 255, 0), thickness=1, lineType=cv2.LINE_AA)
 
             # Sidewall height and tire width are set
             if sidewall and width:
@@ -414,31 +423,116 @@ class Annotator:
                     width = right[0] + 10, width[1]
                     self.points[ord('w')] = width
 
-                # Create bounding box accounting for sidewall and tire width
-                if distance_to_top < distance_to_bottom:
-                    sidewall_height = abs(top[1] - sidewall[1])
-                else:
-                    sidewall_height = abs(bottom[1] - sidewall[1])
-                tire_width = abs(right[0] - width[0])
+                outer, inner = self.create_bounding_ellipses(top, bottom, right, sidewall, width)
+                outer_bbox = outer.bounding_box()
+                inner_bbox = inner.bounding_box()
 
-                bbox = ellipse.bounding_box()
-                top_left, bottom_right = bbox[0], bbox[1]
-
-                tire_height = ellipse.height + sidewall_height * 2
-                size_coefficient = tire_height / ellipse.height
-                outer_width = int(ellipse.width * size_coefficient)
-
-                top_left = top_left[0] - abs(outer_width - ellipse.width) // 2, top_left[1] - sidewall_height
-                bottom_right = bottom_right[0] + tire_width, bottom_right[1] + sidewall_height
+                # Extend bounding box to entire tire
+                top_left = outer_bbox[0]
+                bottom_right = inner_bbox[1][0], outer_bbox[1][1]
+                top_left, bottom_right = self.restrict_bbox(top_left, bottom_right)
 
                 # Draw bounding box
-                cv2.rectangle(image, top_left, bottom_right, (255, 255, 0), thickness=2)
+                cv2.rectangle(image, top_left, bottom_right, (255, 255, 0), thickness=2, lineType=cv2.LINE_AA)
 
                 self.draw_only_annotation_points(image)
                 return True
 
         self.draw_only_annotation_points(image)
         return False
+
+    def create_bounding_ellipses(self, top: (int, int), bottom: (int, int), right: (int, int), sidewall: (int, int),
+                                 width: (int, int)) -> (Ellipse, Ellipse):
+        """
+        Construct outer and inner bounding ellipses of tire.
+
+        Parameters
+        ----------
+        top: (int, int)
+            Top vertex of main ellipse.
+
+        bottom: (int, int)
+            Bottom vertex of main ellipse.
+
+        right: (int, int)
+            Any point on main ellipse.
+
+        sidewall: (int, int)
+            Point on the edge of tire sidewall above top vertex.
+
+        width: (int, int)
+            Point on the inner edge of tire tread.
+
+        Returns
+        -------
+        (Ellipse, Ellipse)
+            Outer and inner bounding ellipses.
+        """
+
+        # Create main ellipse
+        ellipse = ellipse_from_points(top, bottom, right)
+        angle = ellipse.angle
+
+        # Calculate sidewall height
+        sidewall = euclidean_dist(top, sidewall)
+
+        # Obtain bounding ellipses
+        extractor = Extractor(self.image, ellipse)
+        bounding_ellipses = extractor.get_tire_bounding_ellipses(tire_sidewall=sidewall, tire_limit=width)
+
+        # Rotate them correctly
+        outer, inner = bounding_ellipses
+        outer.angle = angle
+        # Rotate inner ellipse around center of main ellipse
+        inner_top = inner.point_on_ellipse(-90)
+        inner_right = inner.point_on_ellipse(0)
+        inner_bottom = inner.point_on_ellipse(90)
+        inner_top = rotate_point(inner_top, angle, (ellipse.cx, ellipse.cy))
+        inner_right = rotate_point(inner_right, angle, (ellipse.cx, ellipse.cy))
+        inner_bottom = rotate_point(inner_bottom, angle, (ellipse.cx, ellipse.cy))
+        inner = ellipse_from_points(inner_top, inner_bottom, inner_right)
+
+        return outer, inner
+
+    def restrict_bbox(self, top_left: (int, int), bottom_right: (int, int), scaled: bool = False) \
+            -> ((int, int), (int, int)):
+        """
+        Make sure bounding box is confined to image dimensions (does not reach out of bounds).
+
+        Parameters
+        ----------
+        top_left: (int, int)
+            Top left corner of bounding box.
+
+        bottom_right: (int, int)
+            Bottom right corner of bounding box.
+
+        scaled: bool
+            Use original image dimensions
+
+        Returns
+        -------
+        ((int, int), (int, int))
+            New top_left and bottom_right points.
+        """
+
+        left, top = top_left
+        right, bottom = bottom_right
+
+        width, height = self.image.shape[1], self.image.shape[0]
+
+        if scaled:
+            left, top, right, bottom = [int(p / self.scale) for p in [left, top, right, bottom]]
+            # Rescale with np.floor, better to undershoot than to have bbox out of bounds
+            width = int(np.floor(width / self.scale))
+            height = int(np.floor(height / self.scale))
+
+        left = max(0, left)
+        top = max(0, top)
+        right = min(width - 1, right)
+        bottom = min(height - 1, bottom)
+
+        return (left, top), (right, bottom)
 
     def annotate_keypoints(self) -> str:
         """
@@ -507,32 +601,34 @@ class Annotator:
                 ord('s'): None,  # Tire sidewall
                 ord('w'): None   # Tire width
             }
-            # Keep drawn ellipse
-            self.image = image
 
-            # Save points and bounding box
+            # Find bounding box
+            outer, inner = self.create_bounding_ellipses(top, bottom, right, sidewall, width)
+            outer_bbox = outer.bounding_box()
+            inner_bbox = inner.bounding_box()
+
+            # Extend bounding box to entire tire
+            top_left = outer_bbox[0]
+            bottom_right = inner_bbox[1][0], outer_bbox[1][1]
+            top_left, bottom_right = self.restrict_bbox(top_left, bottom_right)
+
+            # Draw permanent transparent rectangle over original image to mark as saved
+            rect = self.image[top_left[1]:bottom_right[1], top_left[0]:bottom_right[0], :]
+            colored = np.zeros(shape=rect.shape, dtype=np.uint8)
+            cv2.rectangle(colored, (0, 0), (colored.shape[1], colored.shape[0]), color=(255, 255, 0),
+                          thickness=cv2.FILLED, lineType=cv2.LINE_AA)
+            rect = cv2.addWeighted(rect, 0.5, colored, 0.5, 1.0)
+            self.image[top_left[1]:bottom_right[1], top_left[0]:bottom_right[0], :] = rect
+
+            # Save keypoints together with third parameter (visibility) and bounding box
             top = int(top[0] / self.scale), int(top[1] / self.scale), 1
             bottom = int(bottom[0] / self.scale), int(bottom[1] / self.scale), 1
             right = int(right[0] / self.scale), int(right[1] / self.scale), 1
             sidewall = int(sidewall[0] / self.scale), int(sidewall[1] / self.scale), 1
             width = int(width[0] / self.scale), int(width[1] / self.scale), 1
-
-            ellipse = ellipse_from_points(top, bottom, right)
-            bbox = ellipse.bounding_box()
-            # Extend bounding box to entire tire
-            top_left, bottom_right = bbox[0], bbox[1]
-            distance_to_top = abs(top[1] - sidewall[1])
-            distance_to_bottom = abs(bottom[1] - sidewall[1])
-            if distance_to_top < distance_to_bottom:
-                sidewall_height = abs(top[1] - sidewall[1])
-            else:
-                sidewall_height = abs(bottom[1] - sidewall[1])
-            tire_width = abs(right[0] - width[0])
-            tire_height = ellipse.height + sidewall_height * 2
-            size_coefficient = tire_height / ellipse.height
-            outer_width = int(ellipse.width * size_coefficient)
-            top_left = top_left[0] - abs(outer_width - ellipse.width) // 2, top_left[1] - sidewall_height
-            bottom_right = bottom_right[0] + tire_width, bottom_right[1] + sidewall_height
+            # Rescale bounding box also
+            top_left = int(top_left[0] / self.scale), int(top_left[1] / self.scale)
+            bottom_right = int(bottom_right[0] / self.scale), int(bottom_right[1] / self.scale)
 
             keypoints.append([top, bottom, right, sidewall, width])
             bounding_boxes.append([*top_left, *bottom_right])
@@ -556,6 +652,37 @@ class Annotator:
             # Draw points
             success = self.draw_keypoints(image)
 
+            # Draw model
+            if success:
+                top = self.points[ord('t')]
+                bottom = self.points[ord('b')]
+                right = self.points[ord('r')]
+                sidewall = self.points[ord('s')]
+                width = self.points[ord('w')]
+
+                ellipse = ellipse_from_points(top, bottom, right)
+                angle = ellipse.angle
+                sidewall = int(euclidean_dist(top, sidewall))
+
+                extractor = Extractor(self.image, ellipse)
+                bounding_ellipses = extractor.get_tire_bounding_ellipses(tire_sidewall=sidewall, tire_limit=width)
+
+                outer, inner = bounding_ellipses
+                outer.angle = angle
+
+                inner_top = inner.point_on_ellipse(-90)
+                inner_right = inner.point_on_ellipse(0)
+                inner_bottom = inner.point_on_ellipse(90)
+
+                inner_top = rotate_point(inner_top, angle, (ellipse.cx, ellipse.cy))
+                inner_right = rotate_point(inner_right, angle, (ellipse.cx, ellipse.cy))
+                inner_bottom = rotate_point(inner_bottom, angle, (ellipse.cx, ellipse.cy))
+
+                inner = ellipse_from_points(inner_top, inner_bottom, inner_right)
+
+                cv2.ellipse(image, *outer.cv2_ellipse(), color=(0, 255, 255), thickness=2, lineType=cv2.LINE_AA)
+                cv2.ellipse(image, *inner.cv2_ellipse(90, -90), color=(0, 255, 255), thickness=2, lineType=cv2.LINE_AA)
+
             # Wait for user input
             cv2.imshow('Image', image)
             cv2.namedWindow('Image', cv2.WINDOW_NORMAL)
@@ -573,8 +700,8 @@ class Annotator:
                 submitted = True
                 break
 
-            # P to show tread preview
-            elif key == ord('p'):
+            # Space to show tread preview
+            elif key == 32:
                 if success:
                     top = self.points[ord('t')]
                     bottom = self.points[ord('b')]
@@ -583,11 +710,16 @@ class Annotator:
                     width = self.points[ord('w')]
 
                     ellipse = ellipse_from_points(top, bottom, right)
-                    sidewall = int(np.sqrt((top[0] - sidewall[0]) ** 2 + (top[1] - sidewall[1]) ** 2))
+                    sidewall = int(euclidean_dist(top, sidewall))
 
                     extractor = Extractor(self.image, ellipse)
                     bounding_ellipses = extractor.get_tire_bounding_ellipses(tire_sidewall=sidewall, tire_limit=width)
                     tread = extractor.extract_tread(tire_bounding_ellipses=bounding_ellipses)
+
+                    # Improve preview by equalizing histogram
+                    tread = cv2.cvtColor(tread, cv2.COLOR_BGR2GRAY)
+                    tread = cv2.equalizeHist(tread)
+                    tread = cv2.cvtColor(tread, cv2.COLOR_GRAY2BGR)
 
             # Backspace to hide preview
             elif key == 8 and tread is not None:
@@ -602,9 +734,10 @@ class Annotator:
                 self.image = cv2.flip(self.image, 1)
                 self.flipped = not self.flipped
 
-            # Spacebar to save keypoints
-            elif key == 32 and success:
+            # N to save keypoints
+            elif key == ord('n') and success:
                 save_keypoints()
+                tread = None
 
         cv2.destroyAllWindows()
 
@@ -614,7 +747,7 @@ class Annotator:
         else:
             return ''
 
-    def annotate(self) -> Union[None, tuple]:
+    def annotate(self) -> Optional[tuple]:
         """
         Shows a cv2 window that responds to key inputs, allowing to create bounding ellipses and look at preview of
         extracted tread.
