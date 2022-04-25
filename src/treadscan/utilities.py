@@ -268,7 +268,7 @@ def ellipse_from_points(top: (int, int), bottom: (int, int), third: (int, int)) 
     # Third point might not be exactly the right vertex on ellipse (at 0 degrees)
     # Instead use point coordinates to solve ellipse equation
     # First rotate point the other way for simpler equation (removes the ugly trigonometry)
-    p = rotate_point(third, -angle, (cx, cy))
+    p = rotate_point(third, -angle, (int(cx), int(cy)))
 
     # Ellipse equation is x^2/a^2 + y^2/b^2 = 1, which means a = b * x / sqrt(b^2 - y^2)
     b = height / 2
@@ -304,7 +304,7 @@ def euclidean_dist(a: Union[tuple, list], b: Union[tuple, list]) -> float:
     return np.sqrt((a[0] - b[0])**2 + (a[1] - b[1])**2)
 
 
-def rotate_point(point: tuple, angle: float, pivot: tuple = (0, 0)) -> tuple:
+def rotate_point(point: (int, int), angle: float, pivot: (int, int) = (0, 0)) -> (int, int):
     """
     Return point rotated by angle around given origin.
 
