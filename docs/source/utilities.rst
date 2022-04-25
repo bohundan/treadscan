@@ -9,9 +9,21 @@ Ellipse
 
 
 ellipse_from_points()
--------------
+---------------------
 
 .. autofunction:: treadscan.utilities.ellipse_from_points
+
+
+euclidean_dist()
+----------------
+
+.. autofunction:: treadscan.utilities.euclidean_dist
+
+
+rotate_point()
+--------------
+
+.. autofunction:: treadscan.utilities.rotate_point
 
 
 load_image()
