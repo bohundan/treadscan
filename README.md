@@ -17,7 +17,7 @@ There are 3 different ways to detect car wheels in image. Only `treadscan.Segmen
 
 Before training a model, you need annotated training data. To annotate images, you can use the `model_annotation.py`, which conveniently saves the keypoints and bounding boxes as a JSON in the same format as used in the training notebook. This script is included in [this folder](https://github.com/bohundan/treadscan/tree/master/extras).
 
-![manual annotation](https://raw.githubusercontent.com/bohundan/treadscan/master/docs/source/_static/model_annotation.png)
+![model annotation](https://raw.githubusercontent.com/bohundan/treadscan/master/docs/source/_static/model_annotation.png)
 
 This GUI utilises the OpenCV window, using mouse position and keyboard input to place the points. So to place a point, user can hover over a location and press a specific key, or hold the key while dragging with the mouse.
 The points which have to be placed manually are:
