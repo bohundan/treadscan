@@ -1,6 +1,6 @@
-# Training your own car wheel detection model with PyTorch
+# Training your own vehicle tire detection model with PyTorch
 
-![Wheel detection using trained model](https://raw.githubusercontent.com/bohundan/treadscan/master/docs/source/_static/test_detection.jpg)
+![Tire detection using trained model](https://raw.githubusercontent.com/bohundan/treadscan/master/docs/source/_static/test_detection.jpg)
 
 ### Sources
 https://medium.com/@alexppppp/how-to-train-a-custom-keypoint-detection-model-with-pytorch-d9af90e111da
@@ -12,13 +12,18 @@ https://github.com/pytorch/vision/tree/main/references/detection
 ## Preparing your dataset
 - You can use provided tools in the `../extras` folder to annotate keypoints for training and testing data. Just run `python3 model_annotation.py -i /path/to/my_image001.jpg`. That opens a cv2 window on which you can use your mouse and keyboard to create keypoints and export them in the required JSON format. For more info, see the `model_annotation.py` and `annotator.py` files.
 - Keyboard controls of `model_annotation`:
-- 'T' - create or move the keypoint defining top of car wheel
-- 'B' - bottom of wheel
-- 'R' - right side of wheel
-- 'F' - mirror source image (if you're labeling the car's left side wheels instead of right side, see treadscan.extractor.CameraPosition)
-- 'SPACE' - multiple objects (when more car wheels are visible in image), if all 3 keypoints are set, this will freeze them and you can move on to labeling the next wheel
-- 'ENTER' - submit annotation, write image to `images/` folder and JSON annotation to `annotations/` folder
-- 'ESCAPE' - quit annotation without saving
+- `T` - top of vehicle's rim
+- `B` - bottom of vehicle's rim
+- `R` - third point on the rim (best to always use the same location)
+- `S` - sidewall height (recommended location is above the `T` point)
+- `W` - inner side of tire
+- `SPACEBAR` - show a preview of tire tread
+- `BACKSPACE` - hide tread preview
+- `N` - submit keypoints, keep annotating (you might wish to annotate ALL tires in image if there are multiple)
+- `ENTER` - submit annotation, write image to `images/` folder and JSON annotation to `annotations/` folder
+- `ESCAPE` - quit annotation without saving
+
+![model annotation](https://raw.githubusercontent.com/bohundan/treadscan/master/docs/source/_static/model_annotation.png)
 
 ## Training the model
 - Open the Jupyter notebook `KeypointRCNN_training.ipynb` and run the cells. You may modify any parameters to your liking.
