@@ -46,7 +46,7 @@ from collections import OrderedDict
 from enum import Enum
 from os import listdir
 from os.path import isfile, isdir, join
-from typing import Generator, Union
+from typing import Generator, Optional, Union
 
 import cv2
 import numpy as np
@@ -117,9 +117,9 @@ class Detector:
         whether it is moving or not. Window opens when a car is detected as stopped and closes when car starts moving
         again. The generator then yields the best focused (least blurry) frame from this window.
 
-    set_params(background_sample: Union[np.ndarray, str, None], background_threshold: Union[float, None],
-               motion_threshold: Union[float, None], background_intensity_threshold: Union[int, None],
-               motion_intensity_threshold: Union[int, None]):
+    set_params(background_sample: Union[np.ndarray, str], background_threshold: Optional[float],
+               motion_threshold: Optional[float], background_intensity_threshold: Optional[int],
+               motion_intensity_threshold: Optional[int]):
        Sets detection parameters.
 
     image_difference(image1: np.ndarray, image2: np.ndarray, intensity_threshold: int)
@@ -358,9 +358,9 @@ class Detector:
             yield best_frame
 
     def set_params(self, background_sample: Union[np.ndarray, str, None] = None,
-                   background_threshold: Union[float, None] = None, motion_threshold: Union[float, None] = None,
-                   background_intensity_threshold: Union[int, None] = None,
-                   motion_intensity_threshold: Union[int, None] = None):
+                   background_threshold: Optional[float] = None, motion_threshold: Optional[float] = None,
+                   background_intensity_threshold: Optional[int] = None,
+                   motion_intensity_threshold: Optional[int] = None):
         """
         Set parameters used to detect stopped car(s) from footage. If parameter is None then it remains unchanged.
 
@@ -708,7 +708,7 @@ class FrameExtractor:
     video : cv2.VideoCapture
         Loaded video/stream (when using video input).
 
-    end : Union[int, None]
+    end : Optional[int]
         Index of last frame to be extracted (when using treadscan.InputType.IMAGE_FOLDER).
 
     Methods
@@ -750,7 +750,7 @@ class FrameExtractor:
 
         self.end = None
 
-    def next_frame(self) -> Union[np.ndarray, None]:
+    def next_frame(self) -> Optional[np.ndarray]:
         """
         Gets the next frame from input, converts it to grayscale and returns it.
 
@@ -786,16 +786,16 @@ class FrameExtractor:
                 self.frame_index += 1
                 return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-    def set_folder_bounds(self, start: Union[int, None] = None, end: Union[int, None] = None):
+    def set_folder_bounds(self, start: Optional[int] = None, end: Optional[int] = None):
         """
         Set start and/or end index of images in image folder.
 
         Parameters
         ----------
-        start : Union[int, None]
+        start : Optional[int]
             Index of first frame.
 
-        end : Union[int, None]
+        end : Optional[int]
             Index of last frame.
 
         Raises

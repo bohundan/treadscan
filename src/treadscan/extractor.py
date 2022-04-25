@@ -8,13 +8,12 @@ and between the two ellipses.
 """
 
 from enum import Enum
-from math import sqrt, sin, cos, asin, radians, degrees, ceil, floor, acos
 import multiprocessing
-from typing import Union
+from typing import Optional
 
 import cv2
 import numpy as np
-from .utilities import Ellipse
+from .utilities import Ellipse, euclidean_dist
 
 
 class CameraPosition(Enum):
@@ -78,11 +77,11 @@ class Extractor:
         Returns two ellipses, between which the tire occurs in (mirrored) image.
 
     visualise_bounding_ellipses(tire_width: int, tire_sidewall: int, outer_extend: int, start: float, end: float,
-                                tire_bounding_ellipses: Union[tuple, None])
+                                tire_bounding_ellipses: Optional[tuple])
         Returns image with drawn tire model created from bounding ellipses.
 
     extract_tread(final_width: int, tire_width: int, start: float, end: float,
-                  tire_bounding_ellipses: Union[tuple, None], cores: int)
+                  tire_bounding_ellipses: Optional[tuple], cores: int)
         Returns new image with extracted tire tread (unwrapped).
     """
 
@@ -200,20 +199,20 @@ class Extractor:
         # Image height and width
         h, w = self.image.shape[0], self.image.shape[1]
         # Focal point
-        f = sqrt(w**2 + h**2)
+        f = np.sqrt(w**2 + h**2)
 
-        phi = radians(angle)
+        phi = np.radians(angle)
 
         # Transformation matrix, explained in notes section
-        m_11 = f * cos(phi) + (w / 2) * sin(phi)
+        m_11 = f * np.cos(phi) + (w / 2) * np.sin(phi)
         m_12 = 0
-        m_13 = f * ((-w / 2) * cos(phi) - sin(phi)) + (w / 2) * ((-w / 2) * sin(phi) + cos(phi) + f)
-        m_21 = (h / 2) * sin(phi)
+        m_13 = f * ((-w / 2) * np.cos(phi) - np.sin(phi)) + (w / 2) * ((-w / 2) * np.sin(phi) + np.cos(phi) + f)
+        m_21 = (h / 2) * np.sin(phi)
         m_22 = f
-        m_23 = f * (-h / 2) + (h / 2) * ((-w / 2) * sin(phi) + cos(phi) + f)
-        m_31 = sin(phi)
+        m_23 = f * (-h / 2) + (h / 2) * ((-w / 2) * np.sin(phi) + np.cos(phi) + f)
+        m_31 = np.sin(phi)
         m_32 = 0
-        m_33 = (-w / 2) * sin(phi) + cos(phi) + f
+        m_33 = (-w / 2) * np.sin(phi) + np.cos(phi) + f
 
         # Transformed coordinates
         x_ = (m_11 * x + m_12 * y + m_13) / (m_31 * x + m_32 * y + m_33)
@@ -222,7 +221,7 @@ class Extractor:
         return x_, y_
 
     def get_tire_bounding_ellipses(self, tire_width: int = 0, tire_sidewall: int = 0, outer_extend: int = 0,
-                                   tire_limit: Union[tuple, None] = None) -> (Ellipse, Ellipse):
+                                   tire_limit: Optional[tuple] = None) -> (Ellipse, Ellipse):
         """
         Create and return outer and inner ellipses surrounding car tire.
 
@@ -242,7 +241,7 @@ class Extractor:
             If non-zero, extend outer ellipse (outwards) by this much. To make sure that entirety of tire tread is
             visible between bounding ellipses.
 
-        tire_limit : Union[tuple, None]
+        tire_limit : Optional[tuple]
             Optional point on the inner side of tire, giving the tire_width.
 
         Returns
@@ -264,7 +263,7 @@ class Extractor:
         # Calculate angle of wheel from ratio of ellipse axes, clip between -1 and 1 for arccos (ellipse should always
         # be taller rather than wider anyway)
         ratio = np.clip(self.main_ellipse.width / self.main_ellipse.height, -1, 1)
-        alpha = degrees(acos(ratio))
+        alpha = np.degrees(np.arccos(ratio))
         beta = 90 - alpha
         # Example: 205/55 R 16, width is about half the wheel diameter, sidewall about quarter the wheel diameter
         #          205 mm tire width
@@ -333,17 +332,13 @@ class Extractor:
 
             return shifted_ellipse
 
-        # Shift inner ellipse by tire_width
-        inner_ellipse = perspective_shift_ellipse(tire_ellipse, tire_width)
         # If tire_limit is set, use it to calculate tire_width
         if tire_limit is not None:
-            angle = inner_ellipse.angle_on_ellipse(*tire_limit)
-            point = inner_ellipse.point_on_ellipse(angle)
-            # Adjust tire width to closer fit tire_limit
-            one = 1 if tire_limit[0] > point[0] else -1
-            tire_width += one * int(abs(np.sqrt((tire_limit[0] - point[0])**2 + (tire_limit[1] - point[1])**2)))
-            # New inner_ellipse
-            inner_ellipse = perspective_shift_ellipse(tire_ellipse, tire_width)
+            tire_width = int(tire_ellipse.horizontal_distance_between_point(*tire_limit))
+
+        # Shift inner ellipse by tire_width
+        inner_ellipse = perspective_shift_ellipse(tire_ellipse, tire_width)
+        inner_ellipse.cx = tire_ellipse.cx + tire_width
 
         # Shift outer ellipse (in the opposite direction) by outer_extend
         outer_ellipse = perspective_shift_ellipse(tire_ellipse, -outer_extend)
@@ -352,7 +347,7 @@ class Extractor:
 
     def visualise_bounding_ellipses(self, tire_width: int = 0, tire_sidewall: int = 0, outer_extend: int = 0,
                                     start: float = -10, end: float = 80,
-                                    tire_bounding_ellipses: Union[tuple, None] = None) -> np.ndarray:
+                                    tire_bounding_ellipses: Optional[tuple] = None) -> np.ndarray:
         """
         Creates color (BGR) image with drawn tire model.
 
@@ -378,7 +373,7 @@ class Extractor:
         end : float
             End angle of extraction (must be greater than `start` and must be between -90 and 90).
 
-        tire_bounding_ellipses : Union[tuple, None]
+        tire_bounding_ellipses : Optional[tuple]
             Outer and inner tire bounding ellipses.
 
             If none, they will be auto-generated.
@@ -444,7 +439,7 @@ class Extractor:
         return image
 
     def extract_tread(self, final_width: int = 0, tire_width: int = 0, start: float = -10, end: float = 80,
-                      tire_bounding_ellipses: Union[tuple, None] = None, cores: int = 4) -> np.ndarray:
+                      tire_bounding_ellipses: Optional[tuple] = None, cores: int = 4) -> np.ndarray:
         """
         Unwraps tire tread into a new image.
 
@@ -467,7 +462,7 @@ class Extractor:
         end : float
             End angle of extraction (must be greater than `start` and must be between -90 and 90).
 
-        tire_bounding_ellipses : Union[tuple, None]
+        tire_bounding_ellipses : Optional[tuple]
             Outer and inner tire bounding ellipses.
 
             If none, they will be auto-generated.
@@ -526,17 +521,17 @@ class Extractor:
         point_a = outer_ellipse.point_on_ellipse(deg=0)
         point_b = inner_ellipse.point_on_ellipse(deg=0)
         # Euclidean distance between points
-        tire_width_in_image = sqrt((point_a[0] - point_b[0])**2 + (point_a[1] - point_b[1])**2)
+        tire_width_in_image = euclidean_dist(point_a, point_b)
         step_size = tire_width_in_image / tread_width
 
         # Determining angular step size (on ellipse) in such a way, that the biggest step (at 0 degrees) is the same
         # length as the horizontal steps
-        degrees_step_size = degrees(asin(2 * step_size / outer_ellipse.height))
+        degrees_step_size = np.degrees(np.arcsin(2 * step_size / outer_ellipse.height))
         total_degrees = abs(start - end)
-        tread_height = ceil(total_degrees / degrees_step_size)
+        tread_height = int(np.ceil(total_degrees / degrees_step_size))
 
         # Parallel tread unwrapping, each core (process) is assigned one part of tire tread, which is split horizontally
-        part = floor(tread_height / cores)
+        part = int(np.floor(tread_height / cores))
         # Each part is the same height, except possibly the last one, which can be taller by upto (cores - 1) pixels
         remainder = int(tread_height / cores % 1 * cores)
         # This list contains first and last Y coordinates, for example 40 pixels tall tread, then [0, 10, 20, 30, 40]

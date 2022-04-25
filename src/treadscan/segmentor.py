@@ -6,8 +6,7 @@ segmentation techniques. While Segmentor is simpler, it has no chance of detecti
 with the car's tires. To use RCNNSegmentor you need to install `torch` and `torchvision`.
 """
 
-from math import sin, cos, radians
-from typing import Union
+from typing import Optional
 
 import cv2
 import improutils
@@ -32,7 +31,7 @@ class RCNNSegmentor:
     Attributes
     ----------
     device : torch.device
-        CUDA if available, CPU otherwise.
+        CUDA if available and specified, CPU otherwise.
 
     model : torchvision.models.detection.keypointrcnn_resnet50_fpn
         Region based convolutional neural network model for keypoint detection. Trained to detect 3 keypoints defining
@@ -45,13 +44,15 @@ class RCNNSegmentor:
         one (with the highest confidence).
     """
 
-    def __init__(self, path_to_trained_rcnn_model: str):
+    def __init__(self, path_to_trained_rcnn_model: str, use_cuda: bool = False):
         """
         Parameters
         ----------
         path_to_trained_rcnn_model : str
             Path to file of weight for the RCNN model. Pretrained one is available at
             https://github.com/bohundan/treadscan/blob/master/RCNN_model/saved_model.pth.
+        use_cuda: bool
+            Model will be loaded on CUDA device if available, False by default (slower but saves on memory).
         """
 
         anchor_generator = AnchorGenerator(sizes=(100, 250, 400, 650, 800),
@@ -59,12 +60,12 @@ class RCNNSegmentor:
         self.model = keypointrcnn_resnet50_fpn(pretrained=False, pretrained_backbone=True, num_keypoints=5,
                                                num_classes=2, rpn_anchor_generator=anchor_generator)
 
-        self.device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+        self.device = torch.device('cuda') if use_cuda and torch.cuda.is_available() else torch.device('cpu')
         self.model.to(self.device)
         self.model.load_state_dict(torch.load(path_to_trained_rcnn_model, map_location=self.device))
         self.model.eval()
 
-    def find_ellipse(self, image: np.ndarray, confidence_threshold: float = 0.8) -> Union[tuple, None]:
+    def find_ellipse(self, image: np.ndarray, confidence_threshold: float = 0.8) -> Optional[tuple]:
         """
         Parameters
         ----------
@@ -303,12 +304,12 @@ class Segmentor:
         """
 
         (cx, cy), (w, h), a = cv2.fitEllipse(contour)
-        a_rad = radians(a)
+        a_rad = np.radians(a)
 
         error = 0
         for point in contour:
-            pos_x = (point[0][0] - cx) * cos(-a_rad) - (point[0][1] - cy) * sin(-a_rad)
-            pos_y = (point[0][0] - cx) * sin(-a_rad) + (point[0][1] - cy) * cos(-a_rad)
+            pos_x = (point[0][0] - cx) * np.cos(-a_rad) - (point[0][1] - cy) * np.sin(-a_rad)
+            pos_y = (point[0][0] - cx) * np.sin(-a_rad) + (point[0][1] - cy) * np.cos(-a_rad)
             # -0.25 comes from the equation for ellipse
             # 0.25 instead of 1 because of full width and height (0.5**2)
             # https://answers.opencv.org/question/20521/how-do-i-get-the-goodness-of-fit-for-the-result-of-fitellipse/
@@ -316,7 +317,7 @@ class Segmentor:
 
         return Ellipse(cx, cy, w, h, a), error
 
-    def find_ellipse(self, threshold: int = 135, min_area: int = 0) -> Union[Ellipse, None]:
+    def find_ellipse(self, threshold: int = 135, min_area: int = 0) -> Optional[Ellipse]:
         """
         Find an ellipse in image (car wheel/rim).
 

@@ -2,8 +2,8 @@
 This module contains various useful methods that can be used in multiple different places.
 """
 
-from math import atan, cos, sin, degrees, radians, sqrt, pi
 from os.path import isfile
+from typing import Union
 
 import cv2
 import numpy as np
@@ -111,22 +111,23 @@ class Ellipse:
             is in top left corner, NOT the ellipse center.
         """
 
-        t = radians(deg % 360)
+        t = np.radians(deg % 360)
 
         # Ellipse parameters
-        theta = radians(self.angle)
+        theta = np.radians(self.angle)
         a = self.width / 2
         b = self.height / 2
 
         # Point on ellipse
-        x = a * cos(t) * cos(theta) - b * sin(t) * sin(theta) + self.cx
-        y = a * cos(t) * sin(theta) + b * sin(t) * cos(theta) + self.cy
+        x = a * np.cos(t) * np.cos(theta) - b * np.sin(t) * np.sin(theta) + self.cx
+        y = a * np.cos(t) * np.sin(theta) + b * np.sin(t) * np.cos(theta) + self.cy
 
         return x, y
 
-    def angle_on_ellipse(self, x: int, y: int) -> float:
+    def horizontal_distance_between_point(self, x: int, y: int) -> int:
         """
         Approximate angle which gives the closest point on the right side of ellipse to provided point.
+        Only works for ellipses which AREN'T ROTATED.
 
         Parameters
         ----------
@@ -137,22 +138,41 @@ class Ellipse:
 
         Returns
         -------
-        float
-            Angle approximation (the closest point on the right side ellipse).
+        int
+            Length of horizontal line drawn from (x, y) and intersecting ellipse.
+
+        Raises
+        ------
+        RuntimeError
+            When ran for a rotated ellipse (ellipse.angle != 0) or when ellipse has 0 width.
         """
 
-        best_dist = float('inf')
-        best_angle = 0
+        if self.angle != 0:
+            raise RuntimeError('This method does not work correctly with a rotated ellipse.')
+        if self.width == 0:
+            raise RuntimeError('Ellipse has 0 width.')
 
-        # O(n) algorithm, the formula for inverse self.point_on_ellipse() is incomprehensible
-        for angle in np.arange(-90, 90, 0.25):
-            x_, y_ = self.point_on_ellipse(angle)
-            dist = np.sqrt((x - x_)**2 + (y - y_)**2)
-            if dist < best_dist:
-                best_dist = dist
-                best_angle = angle
+        a = self.width / 2
+        b = self.height / 2
 
-        return best_angle
+        # Move Y to count for ellipse being off center (not at 0,0)
+        y -= self.cy
+        # Make sure Y is on ellipse
+        y = np.clip(y, -b + 2, b - 2)  # Magic two to make really sure
+
+        # From the equation for ellipse x^2/a^2 + y^2/b^2 = 1, x = a * sqrt(b**2 - y**2) / b
+        # Avoid division by zero (and square root of negative number)
+        if b <= abs(y):
+            b = y + 5  # Magic five
+        x_on_ellipse = a * np.sqrt(b**2 - y**2) / b
+
+        # Correct side
+        if x < self.cx:
+            x_on_ellipse *= -1
+
+        dist = abs(int(self.cx + x_on_ellipse - x))
+
+        return dist
 
     def bounding_box(self) -> list:
         """
@@ -165,7 +185,7 @@ class Ellipse:
             List of two points (tuples) - top left and bottom right corner of bounding box.
         """
 
-        theta = radians(self.angle)
+        theta = np.radians(self.angle)
 
         a = self.height / 2
         b = self.width / 2
@@ -202,12 +222,12 @@ class Ellipse:
             Area of ellipse.
         """
 
-        return pi * (self.height / 2) * (self.width / 2)
+        return np.pi * (self.height / 2) * (self.width / 2)
 
 
-def ellipse_from_points(top: (int, int), bottom: (int, int), right: (int, int)) -> Ellipse:
+def ellipse_from_points(top: (int, int), bottom: (int, int), third: (int, int)) -> Ellipse:
     """
-    Create ellipse from 3 points (top, bottom and right).
+    Create ellipse from 3 points. Top and bottom are ellipse vertices, third point lies anywhere on the ellipse.
 
     Parameters
     ----------
@@ -217,13 +237,13 @@ def ellipse_from_points(top: (int, int), bottom: (int, int), right: (int, int)) 
     bottom : (int, int)
         X and Y coordinates of the bottom of the ellipse (at 90 degrees).
 
-    right : (int, int)
-        X and Y coordinates of the right side of the ellipse (at 0 degrees)
+    third : (int, int)
+        X and Y coordinates of any point on the ellipse (except top or bottom).
 
     Returns
     -------
     treadscan.Ellipse
-        Ellipse constructed from provided points.
+        Ellipse constructed from the provided points.
     """
 
     # Center is between top and bottom, in the middle
@@ -231,9 +251,7 @@ def ellipse_from_points(top: (int, int), bottom: (int, int), right: (int, int)) 
     cy = (bottom[1] + top[1]) / 2
 
     # Height is the Euclidean distance between top and bottom
-    height = sqrt((bottom[0] - top[0])**2 + (bottom[1] - top[1])**2)
-    # Width is twice the Euclidean distance between right and center
-    width = 2 * sqrt((right[0] - cx)**2 + (right[1] - cy)**2)
+    height = euclidean_dist(top, bottom)
 
     # Calculating angle using a vector drawn between center and top of ellipse
     x = abs(cx - top[0])
@@ -243,11 +261,80 @@ def ellipse_from_points(top: (int, int), bottom: (int, int), right: (int, int)) 
     if x == 0:
         angle = 0
     else:
-        angle = 90 - degrees(atan(y / x))
+        angle = 90 - np.degrees(np.arctan(y / x))
     # Flip angle to the other side if ellipse is leaning to the left
     angle *= -1 if top[0] < cx else 1
 
+    # Third point might not be exactly the right vertex on ellipse (at 0 degrees)
+    # Instead use point coordinates to solve ellipse equation
+    # First rotate point the other way for simpler equation (removes the ugly trigonometry)
+    p = rotate_point(third, -angle, (cx, cy))
+
+    # Ellipse equation is x^2/a^2 + y^2/b^2 = 1, which means a = b * x / sqrt(b^2 - y^2)
+    b = height / 2
+    # Avoid division by zero (and square root of negative number)
+    if b <= abs(p[1] - cy):
+        b = p[1] - cy + 5  # Magic five
+    a = b * (p[0] - cx) / np.sqrt(b**2 - (p[1] - cy)**2)
+
+    width = abs(2 * a)
+
+    if np.isnan(width):
+        width = 0
+
     return Ellipse(int(cx), int(cy), int(width), int(height), angle)
+
+
+def euclidean_dist(a: Union[tuple, list], b: Union[tuple, list]) -> float:
+    """
+    Return the Euclidean distance between two points
+
+    Parameters
+    ----------
+    a: Union[(int, int), [int, int]]
+
+    b: Union[(int, int), [int, int]]
+
+    Returns
+    -------
+    float
+        Euclidean distance between points
+    """
+
+    return np.sqrt((a[0] - b[0])**2 + (a[1] - b[1])**2)
+
+
+def rotate_point(point: tuple, angle: float, pivot: tuple = (0, 0)) -> tuple:
+    """
+    Return point rotated by angle around given origin.
+
+    Parameters
+    ----------
+    point : (int, int)
+        Original point coordinates.
+
+    angle : float
+        Angle in degrees to rotate point by.
+
+    pivot: (int, int)
+        Center of rotation, (0, 0) by default.
+
+    Returns
+    -------
+    (int, int)
+        New coordinates of point.
+
+    Notes
+    -----
+    Source: https://stackoverflow.com/a/15109215.
+    """
+
+    angle = np.radians(angle)
+
+    x_ = np.cos(angle) * (point[0] - pivot[0]) - np.sin(angle) * (point[1] - pivot[1]) + pivot[0]
+    y_ = np.sin(angle) * (point[0] - pivot[0]) + np.cos(angle) * (point[1] - pivot[1]) + pivot[1]
+
+    return int(x_), int(y_)
 
 
 def load_image(path: str):
