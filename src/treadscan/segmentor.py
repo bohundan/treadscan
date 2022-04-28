@@ -16,7 +16,7 @@ from torchvision.models.detection import keypointrcnn_resnet50_fpn
 from torchvision.models.detection.rpn import AnchorGenerator
 from torchvision.transforms import functional
 
-from .utilities import Ellipse, ellipse_from_points
+from .utilities import Ellipse, ellipse_from_points, euclidean_dist
 
 
 class RCNNSegmentor:
@@ -40,8 +40,8 @@ class RCNNSegmentor:
     Methods
     -------
     find_ellipse(image: numpy.ndarray)
-        Finds and returns ellipse (car wheel/rim 'inside' tire). Uses RCNN to detect all wheels in image, picks the best
-        one (with the highest confidence).
+        Finds and returns ellipse, sidewall height and point on the inner side of tire. Uses RCNN to detect all tires
+        in image, picks the best one (with the highest confidence).
     """
 
     def __init__(self, path_to_trained_rcnn_model: str, use_cuda: bool = False):
@@ -135,7 +135,7 @@ class RCNNSegmentor:
             for point in output[0]['keypoints'][best].detach().cpu().numpy():
                 keypoints.append((int(point[0]), int(point[1])))
             ellipse = ellipse_from_points(keypoints[0], keypoints[1], keypoints[2])
-            sidewall = int(np.sqrt((keypoints[0][0] - keypoints[3][0])**2 + (keypoints[0][1] - keypoints[3][1])**2))
+            sidewall = int(euclidean_dist(keypoints[0], keypoints[3]))
 
             return ellipse, sidewall, keypoints[4]
 

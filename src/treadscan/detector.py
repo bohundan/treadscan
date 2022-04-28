@@ -1,16 +1,16 @@
 """
-This module is used for detecting stopped car(s) from camera footage.
+This module is used for detecting stopped vehicle(s) from camera footage.
 
-For example if used on footage of cars stopping in front of traffic lights, Detector.detect() should only yield one
-image per one stopped car. This is achieved by comparing every frame against static background image, when there's
-a low match between the two, the frame likely contains another object (a car). There would be more sequential frames
+For example if used on footage of vehicles stopping in front of traffic lights, Detector.detect() should only yield one
+image per one stopped vehicle. This is achieved by comparing every frame against static background image, when there's
+a low match between the two, the frame likely contains another object (a vehicle). There would be more sequential frames
 containing an object, so the next step is to compare each two consequent frames with each other. If they're nearly
 identical it can be assumed that there's no movement (the longer the time passed between two frames the more obvious
 the difference will be if there is movement).
 
-But there can be many such consequent frames, as cars might be stopped waiting at the traffic lights for some time, so
-to obtain just one image, these frames (containing stopped car) are compared all against each other by measuring their
-Laplacian variance, which in short ensures that the best focused frame will be the one detected.
+But there can be many such consequent frames, as vehicles might be stopped waiting at the traffic lights for some time,
+so to obtain just one image, these frames (containing stopped vehicles) are compared all against each other by measuring
+their Laplacian variance, which in short ensures that the best focused frame will be the one detected.
 These methods combined create a state-machine of sorts
 
 START : No vehicle
@@ -30,7 +30,7 @@ START : No vehicle
         Remember current frame and its Laplacian variance
 
         -> 1     (current frame doesn't match background and doesn't match previous frame)
-                 Yield best frame of stopped car, car now started moving
+                 Yield best frame of stopped vehicle, vehicle now started moving
         -> 2     (current frame doesn't match background and matches previous frame)
                  If Laplacian variance of current frame is better than previous best, new best frame detected
         -> END   (last frame, end of footage)
@@ -76,7 +76,7 @@ class InputType(Enum):
 
 class Detector:
     """
-    Detects presence and motion of a vehicle from footage, yielding 1 image per 1 stopped car.
+    Detects presence and motion of a vehicle from footage, yielding 1 image per 1 stopped vehicle.
 
     Input can either be a folder full of images (has to be sorted) or a video/stream.
 
@@ -113,9 +113,9 @@ class Detector:
         Sets Detector.frame_extractor attribute.
 
     detect(scale: float, window: int)
-        Generator which yields one image per one stopped car. Uses a window, in which it detects car presence and
-        whether it is moving or not. Window opens when a car is detected as stopped and closes when car starts moving
-        again. The generator then yields the best focused (least blurry) frame from this window.
+        Generator which yields one image per one stopped vehicle. Uses a window, in which it detects vehicle presence
+        and whether it is moving or not. Window opens when a vehicle is detected as stopped and closes when vehicle
+        starts moving again. The generator then yields the best focused (least blurry) frame from this window.
 
     set_params(background_sample: Union[np.ndarray, str], background_threshold: Optional[float],
                motion_threshold: Optional[float], background_intensity_threshold: Optional[int],
@@ -205,7 +205,7 @@ class Detector:
 
     def set_input(self, input_path: str, input_type: InputType):
         """
-        Set input (footage from which to detect cars from). You can also access it through
+        Set input (footage from which to detect vehicles from). You can also access it through
         treadscan.Detector.frame_extractor attribute.
 
         Parameters
@@ -268,7 +268,7 @@ class Detector:
 
     def detect(self, scale: float = 0.25, window: int = 50) -> Generator[np.ndarray, None, None]:
         """
-        Generator which yields one frame for footage per one stopped car. Uses frame extractor set by
+        Generator which yields one frame for footage per one stopped vehicle. Uses frame extractor set by
         Detector.set_input() method.
 
         Parameters
@@ -277,16 +277,16 @@ class Detector:
             Rescales footage down (to speed up processing).
 
         window : int
-            Number of frames that are also considered (starts with first frame where stopped car is detected).
-            Compensates for small movements and noise in footage that could otherwise cause one car to yield multiple
-            images.
+            Number of frames that are also considered (starts with first frame where stopped vehicle is detected).
+            Compensates for small movements and noise in footage that could otherwise cause one vehicle to yield
+            multiple images.
 
             The higher the framerate, the longer window is recommended.
 
         Yields
         ------
         numpy.ndarray
-            One image per one stopped car from footage.
+            One image per one stopped vehicle from footage.
 
         Raises
         ------
@@ -362,7 +362,7 @@ class Detector:
                    background_intensity_threshold: Optional[int] = None,
                    motion_intensity_threshold: Optional[int] = None):
         """
-        Set parameters used to detect stopped car(s) from footage. If parameter is None then it remains unchanged.
+        Set parameters used to detect stopped vehicles(s) from footage. If parameter is None then it remains unchanged.
 
         Parameters
         ----------
@@ -600,18 +600,18 @@ class Detector:
             Rescales footage down (to speed up processing).
 
         window : int
-            Number of frames that are also considered (starts with first frame where stopped car is detected).
-            Compensates for small movements and noise in footage that could otherwise cause one car to yield multiple
-            images.
+            Number of frames that are also considered (starts with first frame where stopped vehicle is detected).
+            Compensates for small movements and noise in footage that could otherwise cause one vehicle to yield
+            multiple images.
 
             The higher the framerate, the longer window is recommended.
 
         Returns
         -------
         (list, list, list, list)
-            Tuple of four datasets, car presence, car motion, car blurriness and window status. All four contain
-            data-points for each frame of footage, so even the car blurriness dataset contains data of frames where
-            no car is present.
+            Tuple of four datasets, vehicle presence, vehicle motion, vehicle blurriness and window status. All four
+            contain data-points for each frame of footage, so even the vehicle blurriness dataset contains data of
+            frames where no vehicle is present.
 
         Raises
         ------

@@ -40,6 +40,16 @@ class Ellipse:
 
     cv2_ellipse(start: float, end: float)
         Returns self as list, which when unpacked (star operator) is compatible with cv2.ellipse() drawing operation.
+
+    horizontal_distance_between_point(x: int, y: int)
+        Returns the length of a horizontal line drawn from point and intersecting with the ellipse. Only implemented for
+        non-rotated ellipse.
+
+    bounding_box():
+        Returns top left and bottom right points of ellipse's bounding box.
+
+    area():
+        Returns ellipse's area.
     """
 
     cx: int

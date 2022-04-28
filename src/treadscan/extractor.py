@@ -1,10 +1,11 @@
 """
-This module is used for tread extraction (unwrapping) given the image and the ellipse defining the car wheel in image.
+This module is used for tread extraction (unwrapping) given the image and the ellipse defining the vehicle's rim in
+image.
 
-Extractor class uses an image and an ellipse in the image, found by `Segmentor`, which defines the car wheel/rim, to
+Extractor class uses an image and an ellipse in the image, found by `Segmentor`, which defines the vehicle's rim, to
 extract (unwrap) the tire tread as a separate image. First it corrects the rotation and then, using perspective
-transformations, it creates bounding ellipses around the car tire. Tread unwrapping is then done by "walking" along
-and between the two ellipses.
+transformations, it creates bounding ellipses around the vehicle's tire. Tread unwrapping is then done by "walking"
+along and between the two ellipses.
 """
 
 from enum import Enum
@@ -18,33 +19,33 @@ from .utilities import Ellipse, euclidean_dist
 
 class CameraPosition(Enum):
     """
-    Enum class specifying position from which car tire (wheel) has been captured.
+    Enum class specifying position from which vehicle tire (rim) has been captured.
 
     As most countries drive on the right side of the road, the safest placement would be on the right side of the road
     also (on the sidewalk instead of the middle of the road). And thus, the position would be on the RIGHT. This is
     important in tread extraction because of where the tread is visible would be different if the image is mirrored,
-    as it would be normally be on the right side of the ellipse defining a car wheel.
+    as it would be normally be on the right side of the ellipse defining a vehicle's rim.
 
-    So if the image of the car is taken from the left side, it will simply be mirrored before extracting the tread and
-    the tread mirrored again afterwards to correct orientation.
+    So if the image of the vehicle is taken from the left side, it will simply be mirrored before extracting the tread
+    and the tread mirrored again afterwards to correct orientation.
 
     FRONT_RIGHT :
-        Camera facing car from the front, on the car's right side, capturing the RIGHT FRONT tire.
+        Camera facing vehicle from the front, on the vehicle's right side, capturing the RIGHT FRONT tire.
 
         (Right side tire captured from the front).
 
     FRONT_LEFT :
-        Camera facing car from the front, on the car's left side, capturing the LEFT FRONT tire.
+        Camera facing vehicle from the front, on the vehicle's left side, capturing the LEFT FRONT tire.
 
         (Left side tire captured from the front).
 
     BACK_RIGHT :
-        Camera is BEHIND the car, on the car's right side, capturing the RIGHT BACK tire.
+        Camera is BEHIND the vehicle, on the vehicle's right side, capturing the RIGHT BACK tire.
 
         (Right side tire captured from the back).
 
     BACK_LEFT :
-        Camera is BEHIND the car, on the car's left side, capturing the LEFT BACK tire.
+        Camera is BEHIND the vehicle, on the vehicle's left side, capturing the LEFT BACK tire.
 
         (Left side tire captured from the back).
     """
@@ -66,14 +67,14 @@ class Extractor:
         Image from which to extract tread.
 
     ellipse : treadscan.Ellipse
-        Ellipse defined by center, size and rotation, which describes car's tire (wheel/rim) position in image.
+        Ellipse defined by center, size and rotation, which describes vehicle's tire (rim) position in image.
 
     Methods
     -------
     perspective_transform_y_axis(angle: float, x: int, y: int)
         Returns new coordinates (position of original in image rotated around center Y axis).
 
-    get_tire_bounding_ellipses(tire_width: int, tire_sidewall: int, outer_extend: int)
+    get_tire_bounding_ellipses(tire_width: int, tire_sidewall: int, outer_extend: int, tire_limit: Optional[tuple])
         Returns two ellipses, between which the tire occurs in (mirrored) image.
 
     visualise_bounding_ellipses(tire_width: int, tire_sidewall: int, outer_extend: int, start: float, end: float,
@@ -93,7 +94,7 @@ class Extractor:
             Original image from which to extract tire tread.
 
         ellipse : treadscan.Ellipse
-            Ellipse defined by center, size and rotation, which describes car's tire (wheel/rim) position in image.
+            Ellipse defined by center, size and rotation, which describes vehicle's tire (rim) position in image.
         """
 
         self.main_ellipse = ellipse
@@ -223,7 +224,7 @@ class Extractor:
     def get_tire_bounding_ellipses(self, tire_width: int = 0, tire_sidewall: int = 0, outer_extend: int = 0,
                                    tire_limit: Optional[tuple] = None) -> (Ellipse, Ellipse):
         """
-        Create and return outer and inner ellipses surrounding car tire.
+        Create and return outer and inner ellipses surrounding the vehicle's tire.
 
         These ellipses may be flipped the wrong way around (outer is always on the left and inner is always on the
         right) as there is no easy way to determine on which side of the ellipse is the tire tread visible,
@@ -383,7 +384,7 @@ class Extractor:
         numpy.ndarray
             BGR image with drawn ellipses defining the tire model used for tread extraction.
 
-            Red ellipse = main ellipse (car wheel).
+            Red ellipse = main ellipse (vehicle's rim).
 
             Yellow ellipses = bounding ellipses of tire (outer and inner sides of tire).
 
