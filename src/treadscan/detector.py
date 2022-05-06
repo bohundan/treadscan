@@ -316,7 +316,7 @@ class Detector:
         # Acquire first frame
         prev_frame = self.frame_extractor.next_frame()
         if prev_frame is None:
-            raise RuntimeError('Failed fetching first frame from input.')
+            raise RuntimeError('Failed fetching first frame from input. Possibly reached the end.')
         if prev_frame.shape != self.background_sample.shape:
             raise RuntimeError('Footage and background sample have mismatched resolution.')
         prev_frame = self._prep_image(prev_frame, scale, blur_kernel)
@@ -640,7 +640,7 @@ class Detector:
         # Acquire first frame
         prev_frame = self.frame_extractor.next_frame()
         if prev_frame is None:
-            raise RuntimeError('Failed fetching first frame from input.')
+            raise RuntimeError('Failed fetching first frame from input. Possibly reached the end.')
         if prev_frame.shape != self.background_sample.shape:
             raise RuntimeError('Footage and background sample have mismatched resolution.')
         prev_frame = self._prep_image(prev_frame, scale, blur_kernel)

@@ -116,21 +116,22 @@ class RCNNSegmentor:
             best = 0
             best_score = -1
 
-            # Compare first 3 best models
+            # Compare first 3 best results
             for i in range(0, min(len(scores), 3)):
-                # Create ellipse from detected keypoints
                 keypoints = []
                 for point in output[0]['keypoints'][i].detach().cpu().numpy():
                     keypoints.append((int(point[0]), int(point[1])))
+                # Create ellipse from detected keypoints
                 ellipse = ellipse_from_points(keypoints[0], keypoints[1], keypoints[2])
 
-                # Calculate score of modelled ellipse (confidence * ellipse height)
+                # Calculate score of modelled ellipse (confidence * ellipse height), because we want the closest one,
+                # which in turn gives tread with the highest resolution (closer tire is larger)
                 score = scores[i] * ellipse.height
                 if score > best_score:
                     best_score = score
                     best = i
 
-            # Return best ellipse
+            # Return best result
             keypoints = []
             for point in output[0]['keypoints'][best].detach().cpu().numpy():
                 keypoints.append((int(point[0]), int(point[1])))
