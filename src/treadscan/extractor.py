@@ -499,30 +499,26 @@ class Extractor:
         if cores < 1:
             raise ValueError('Number of cores must be greater or equal to 1.')
 
-        if tire_width == 0:
-            tire_width = int(self.main_ellipse.height / 1.8)
-
-        tread_width = final_width
-        if tread_width == 0:
-            tread_width = tire_width
-
         if tire_bounding_ellipses is None:
-            outer_ellipse, inner_ellipse = self.get_tire_bounding_ellipses(tire_width=tire_width)
+            outer_ellipse, inner_ellipse = self.get_tire_bounding_ellipses(tire_width=self.main_ellipse.height // 2)
         else:
             if len(tire_bounding_ellipses) != 2:
                 raise ValueError('Invalid amount of ellipses provided. Must be 2 (outer and inner).')
             outer_ellipse, inner_ellipse = tire_bounding_ellipses
             if type(outer_ellipse) is not Ellipse or type(inner_ellipse) is not Ellipse:
                 raise ValueError('Ellipses are not an instance of treadscan.Ellipse.')
-            # Rotation is already accounted for
-            outer_ellipse.angle = 0
-            inner_ellipse.angle = 0
 
         # Determining horizontal step size
         point_a = outer_ellipse.point_on_ellipse(deg=0)
         point_b = inner_ellipse.point_on_ellipse(deg=0)
-        # Euclidean distance between points
+
+        # Determine tread width if not set
         tire_width_in_image = euclidean_dist(point_a, point_b)
+        tread_width = final_width
+        if tread_width == 0:
+            tread_width = int(tire_width_in_image)
+
+        # Determine horizontal step size
         step_size = tire_width_in_image / tread_width
 
         # Determining angular step size (on ellipse) in such a way, that the biggest step (at 0 degrees) is the same
