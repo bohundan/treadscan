@@ -51,7 +51,7 @@ from typing import Generator, Optional, Union
 import cv2
 import numpy as np
 
-from .utilities import load_image, scale_image, subsample_hash
+from .utilities import scale_image, subsample_hash
 
 
 class InputType(Enum):
@@ -74,620 +74,101 @@ class InputType(Enum):
     STREAM = 2
 
 
-class Detector:
+class BackgroundSubtractorSimple:
     """
-    Detects presence and motion of a vehicle from footage, yielding 1 image per 1 stopped vehicle.
+    Simple background subtractor immune to *sleeping person* phenomenon (an object that stops moving won't become a part
+    of the background). This subtractor doesn't adapt to changing background and needs to be provided with one manually.
+    Only works with grayscale images.
 
-    Input can either be a folder full of images (has to be sorted) or a video/stream.
+    Same interface as OpenCV's BackgroundSubtractor
+    (https://docs.opencv.org/3.4/d7/df6/classcv_1_1BackgroundSubtractor.html).
 
     Attributes
     ----------
     background_sample : numpy.ndarray
-        Grayscale image of the scene without a vehicle present (is used when detection vehicle presence).
+        Image of empty background (without foreground objects present).
 
-    frame_extractor : treadscan.FrameExtractor
-        Frame extractor used to get frames from input footage for detection.
-
-    background_intensity_threshold : int
-        Difference between pixels needed to be classified as 'not background'.
-
-    background_threshold : float
-        Minimum percentage of 'not background' pixels to evaluate image as containing a vehicle.
-
-    motion_intensity_threshold : int
-        Difference between pixels needed to be classified as 'motion' (between 2 subsequent images).
-
-    motion_threshold : float
-        Minimum percentage of 'moving' pixels to evaluate 2 subsequent images as having motion.
-
-    lookup_table : collections.OrderedDict
-        HashTable with hashes of images and their Laplacian variance. Used when comparing blurriness of frames to avoid
-        needlessly calculating the same variance of the same image multiple times.
-
-    lookup_table_max_size : int
-        Maximum size lookup_table can grow to before old values start being purged to limit memory usage.
+    intensity_threshold : int
+        Minimal difference between pixel values to be subtracted. If the difference is smaller than this threshold, the
+        pixel is regarded as a *background pixel*.
 
     Methods
     -------
-    set_input(input_path: str, input_type: treadscan.InputType)
-        Sets Detector.frame_extractor attribute.
+    apply(image: numpy.ndarray)
+        Returns mask of foreground objects.
 
-    detect(scale: float, window: int)
-        Generator which yields one image per one stopped vehicle. Uses a window, in which it detects vehicle presence
-        and whether it is moving or not. Window opens when a vehicle is detected as stopped and closes when vehicle
-        starts moving again. The generator then yields the best focused (least blurry) frame from this window.
-
-    set_params(background_sample: Union[np.ndarray, str], background_threshold: Optional[float],
-               motion_threshold: Optional[float], background_intensity_threshold: Optional[int],
-               motion_intensity_threshold: Optional[int]):
-       Sets detection parameters.
-
-    image_difference(image1: np.ndarray, image2: np.ndarray, intensity_threshold: int)
-        Calculate the difference between images as percentage.
-
-    vehicle_present_in_image(image: numpy.ndarray)
-        Determines whether vehicle is present in image or not.
-
-    motion_between_images(image1: numpy.ndarray, image2: numpy.ndarray)
-        Determines if there is movement between the two images.
-
-    cached_laplacian_var(image: numpy.ndarray)
-        Calculates Laplacian variance of image.
-
-    compare_image_focus(image1: numpy.ndarray, image2: numpy.ndarray)
-        Compares *blurriness* of the two images, return the less blurry one.
-
-    get_full_detection_data(input_path: str, input_type: treadscan.InputType)
-        Generate datasets for analysis of detection parameters.
+    getBackgroundImage()
+        Returns background image.
     """
 
-    def __init__(self, background_sample: Union[np.ndarray, str]):
+    def __init__(self, background_sample: np.ndarray, intensity_threshold: int = 50):
         """
         Parameters
         ----------
-        background_sample : numpy.ndarray or str
-            Grayscale image of background of the scene the Detector will be used on.
-
-            Either as raw image (two-dimensional numpy.ndarray of numpy.uint8) or path to image, which exists and is
-            readable.
-
-        Raises
-        ------
-        ValueError
-            If path to background_sample doesn't exist or isn't readable (when provided as string).
-
-            If path to background_sample cannot be read by cv2.imread (when provided as string).
-
-            If background_sample isn't a grayscale image.
-
-            If background_sample has invalid resolution (zero pixels tall or wide image).
-        """
-
-        # Reading from file
-        if type(background_sample) is str:
-            image = load_image(background_sample)
-        # Provided as array
-        else:
-            image = background_sample
-
-        # Checking validity
-        if image is None:
-            raise ValueError('Background sample cannot be read.')
-        if len(image.shape) != 2:
-            raise ValueError('Background sample is not grayscale.')
-        if image.shape[0] == 0 or image.shape[1] == 0:
-            raise ValueError('Background sample is zero pixels tall/wide.')
-
-        # Blur to remove some noise
-        self.background_sample = cv2.GaussianBlur(image, (5, 5), 0)
-
-        # Input footage
-        self.frame_extractor = None
-
-        # Difference between pixels needed to be classified as 'not background'
-        self.background_intensity_threshold = 50
-        # Minimum percentage of 'not background' pixels to evaluate image as containing a vehicle
-        self.background_threshold = 0.2
-
-        # Difference between pixels needed to be classified as 'motion' (between 2 subsequent images)
-        self.motion_intensity_threshold = 10
-        # Minimum percentage of 'moving' pixels to evaluate 2 subsequent images as having motion
-        self.motion_threshold = 0.02
-
-        # Structure used for caching some results that can be reused to speed up processing time
-        self.lookup_table = OrderedDict()
-        self.lookup_table_max_size = 1024
-
-        # Background sample used during the detect() method for background subtraction
-        self._background_for_processing = None
-        # Downscale factor for faster processing
-        self._scale = 0.25
-
-    def set_input(self, input_path: str, input_type: InputType):
-        """
-        Set input (footage from which to detect vehicles from). You can also access it through
-        treadscan.Detector.frame_extractor attribute.
-
-        Parameters
-        ----------
-        input_path : str
-            Path to video/stream or to folder containing images (sorted in sequence).
-
-        input_type : treadscan.InputType
-        """
-
-        self.frame_extractor = FrameExtractor(input_path, input_type)
-
-    @staticmethod
-    def _calc_kernel_size(image_width: int, image_height: int) -> (int, int):
-        """
-        Calculate odd kernel size to use for blurring images (for processing footage).
-
-        Parameters
-        ----------
-        image_width : int
-
-        image_height : int
-
-        Returns
-        -------
-        (int, int)
-            Tuple of integers (square kernel of odd size).
-        """
-
-        # 1/50 of the smaller dimension
-        kernel_size = min(image_width, image_height) // 50
-        # Ensure oddness
-        kernel_size += (1 if kernel_size % 2 == 0 else 0)
-
-        return kernel_size, kernel_size
-
-    @staticmethod
-    def _prep_image(image: np.ndarray, scale: float, blur_kernel: tuple):
-        """
-        Scale and blur image for processing.
-
-        Parameters
-        ----------
-        image : numpy.ndarray
-
-        scale : float
-
-        blur_kernel : (int, int)
-
-        Returns
-        -------
-        numpy.ndarray
-            Scaled and blurred image.
-        """
-
-        image = scale_image(image, scale)
-        image = cv2.blur(image, blur_kernel)
-
-        return image
-
-    def detect(self, scale: float = 0.25, window: int = 50) -> Generator[np.ndarray, None, None]:
-        """
-        Generator which yields one frame for footage per one stopped vehicle. Uses frame extractor set by
-        Detector.set_input() method.
-
-        Parameters
-        ----------
-        scale : float
-            Rescales footage down (to speed up processing).
-
-        window : int
-            Number of frames that are also considered (starts with first frame where stopped vehicle is detected).
-            Compensates for small movements and noise in footage that could otherwise cause one vehicle to yield
-            multiple images.
-
-            The higher the framerate, the longer window is recommended.
-
-        Yields
-        ------
-        numpy.ndarray
-            One image per one stopped vehicle from footage.
-
-        Raises
-        ------
-        ValueError
-            If path to video or folder doesn't exist or cannot be read.
-
-        RuntimeError
-            If failed to fetch first frame from footage.
-
-            If input frames have different resolution than the background sample.
-        """
-
-        if self.frame_extractor is None:
-            raise RuntimeError('No input has been set (use treadscan.Detector.set_input() first).')
-
-        if not 0 < scale <= 1:
-            raise ValueError('Invalid scale factor (must be between 1 and 0).')
-
-        self._scale = scale
-        height, width = self.background_sample.shape
-        blur_kernel = self._calc_kernel_size(int(width * scale), int(height * scale))
-        self._background_for_processing = self._prep_image(self.background_sample, scale, blur_kernel)
-
-        last_hit = window
-        best_frame = None
-
-        # Acquire first frame
-        prev_frame = self.frame_extractor.next_frame()
-        if prev_frame is None:
-            raise RuntimeError('Failed fetching first frame from input. Possibly reached the end.')
-        if prev_frame.shape != self.background_sample.shape:
-            raise RuntimeError('Footage and background sample have mismatched resolution.')
-        prev_frame = self._prep_image(prev_frame, scale, blur_kernel)
-
-        frame = self.frame_extractor.next_frame()
-        while frame is not None:
-            # Process next frame
-            if frame.shape != self.background_sample.shape:
-                raise RuntimeError('Footage and background sample have mismatched resolution.')
-            curr_frame = self._prep_image(frame, scale, blur_kernel)
-
-            car_present = self.vehicle_present_in_image(curr_frame)
-            car_not_moving = not self.motion_between_images(curr_frame, prev_frame)
-
-            # Open or lengthen window
-            if car_present and car_not_moving:
-                last_hit = 0
-            elif last_hit < window:
-                last_hit += 1
-
-            if last_hit < window:
-                # Get the best focused frame in window (only frames where car is present and not moving are considered)
-                if last_hit == 0:
-                    if best_frame is None:
-                        best_frame = frame
-                    else:
-                        best_frame = self.compare_image_focus(frame, best_frame)
-            elif best_frame is not None:
-                # Window has closed, yield best focused frame (and unset it to wait for next opened window)
-                yield best_frame
-                best_frame = None
-
-            # Next frame
-            prev_frame = curr_frame
-            frame = self.frame_extractor.next_frame()
-
-        # Make sure to yield last frame if footage ends with window open
-        if best_frame is not None:
-            yield best_frame
-
-    def set_params(self, background_sample: Union[np.ndarray, str, None] = None,
-                   background_threshold: Optional[float] = None, motion_threshold: Optional[float] = None,
-                   background_intensity_threshold: Optional[int] = None,
-                   motion_intensity_threshold: Optional[int] = None):
-        """
-        Set parameters used to detect stopped vehicles(s) from footage. If parameter is None then it remains unchanged.
-
-        Parameters
-        ----------
-        background_sample : numpy.ndarray or str or None
-            Use provided image (will be preprocessed) or load image from disk (if path is given).
-
-        background_threshold : float
-            Minimum percentage of 'not background' pixels to evaluate image as containing a vehicle.
-
-        motion_threshold : float
-            Minimum percentage of 'moving' pixels to evaluate 2 subsequent images as having motion.
-
-        background_intensity_threshold : int
-            Difference between pixels needed to be classified as 'not background'.
-
-        motion_intensity_threshold : int
-            Difference between pixels needed to be classified as 'motion' (between 2 subsequent images).
-
-        Raises
-        ------
-        ValueError
-            When provided parameter is out of range or if path to image doesn't exist or is not readable.
-        """
-
-        if background_sample is not None:
-            if type(background_sample) is str:
-                image = load_image(background_sample)
-            else:
-                image = background_sample
-
-            # Checking validity
-            if image is None:
-                raise ValueError('Background sample cannot be read.')
-            if len(image.shape) != 2:
-                raise ValueError('Background sample is not grayscale.')
-            if image.shape[0] == 0 or image.shape[1] == 0:
-                raise ValueError('Background sample is zero pixels tall/wide.')
-
-            self.background_sample = cv2.GaussianBlur(image, (5, 5), 0)
-
-            height, width = self.background_sample.shape
-            blur_kernel = self._calc_kernel_size(int(width * self._scale), int(height * self._scale))
-            self._background_for_processing = self._prep_image(self.background_sample, self._scale, blur_kernel)
-
-        if background_threshold is not None:
-            if not 0 <= background_threshold <= 1:
-                raise ValueError('Background threshold out of range (must be between 0 and 1)')
-            self.background_threshold = background_threshold
-
-        if motion_threshold is not None:
-            if not 0 <= motion_threshold <= 1:
-                raise ValueError('Motion threshold out of range (must be between 0 and 1)')
-            self.motion_threshold = motion_threshold
-
-        if background_intensity_threshold is not None:
-            if not 0 <= background_intensity_threshold <= 255:
-                raise ValueError('Background intensity threshold out of range (must be between 0 and 255)')
-            self.background_intensity_threshold = background_intensity_threshold
-
-        if motion_intensity_threshold is not None:
-            if not 0 <= motion_intensity_threshold <= 255:
-                raise ValueError('Motion intensity threshold out of range (must be between 0 and 255)')
-            self.motion_intensity_threshold = motion_intensity_threshold
-
-    @staticmethod
-    def image_difference(image1: np.ndarray, image2: np.ndarray, intensity_threshold: int) -> float:
-        """
-        Calculate percentage of pixels that are mismatched (their difference is greater than intensity_threshold).
-
-        Parameters
-        ----------
-        image1 : np.ndarray
-
-        image2 : np.ndarray
+        background_sample : numpy.ndarray
+            Image of empty background (without foreground objects present).
 
         intensity_threshold : int
-            Difference required for pixel to be evaluated as 'different'.
-
-        Returns
-        -------
-        float
-            In range between 0 and 1. Higher the number bigger the difference.
+            Minimal difference between pixel values to be subtracted. If the difference is smaller than this threshold,
+            the pixel is regarded as a *background pixel*.
 
         Raises
         ------
         ValueError
-            If image resolution is mismatched or images aren't grayscale.
+            When background_sample isn't grayscale.
         """
 
-        if len(image1.shape) != 2 or len(image2.shape) != 2:
-            raise ValueError('One of the provided images is not grayscale.')
-        if image1.shape[0] != image2.shape[0] or image1.shape[1] != image2.shape[1]:
-            raise ValueError('Mismatched resolution of images.')
+        if len(background_sample.shape) != 2:
+            raise ValueError('BackgroundSubtractorSimple only works with grayscale images.')
 
-        difference = abs(image1.astype(np.intc) - image2.astype(np.intc)).astype(np.uint8)
-        mask = np.greater(difference, intensity_threshold)
-        result = np.count_nonzero(mask) / (image1.shape[0] * image1.shape[1])
+        self.background_sample = background_sample
+        self.intensity_threshold = intensity_threshold
 
-        return result
+        self._cached_background = self.background_sample
 
-    def vehicle_present_in_image(self, image: np.ndarray) -> bool:
+    def apply(self, image: np.ndarray) -> np.ndarray:
         """
-        Detect vehicle in image by subtracting background, thresholding and counting percent (mean) of remaining pixels.
-        If a vehicle is present, then the amount of remaining pixels will be high.
-
-        Uses self.background_intensity_threshold as the threshold of minimum difference between image and background,
-        and self.background_threshold as the threshold of percentage of pixels that are 'not background' to determine
-        presence of vehicle. If the amount of 'non-background' pixels is larger than this threshold, then the image
-        is evaluated as containing a vehicle.
+        Remove background from image.
 
         Parameters
         ----------
         image : numpy.ndarray
-            Input image.
-
-        Returns
-        -------
-        bool
-            True when vehicle is detected.
-
-            False when vehicle is not detected.
-        """
-
-        result = self.image_difference(self._background_for_processing, image, self.background_intensity_threshold)
-
-        return result > self.background_threshold
-
-    def motion_between_images(self, image1: np.ndarray, image2: np.ndarray) -> bool:
-        """
-        Determine whether there is movement between two images.
-
-        Uses self.motion_intensity_threshold as the threshold of minimum difference of pixel values to evaluate them as
-        "having changed" - moving, and self.motion_threshold as the threshold of percentage of pixels that are "moving"
-        to evaluate the images as having motion.
-
-        Parameters
-        ----------
-        image1 : numpy.ndarray
-
-        image2 : numpy.ndarray
-
-        Returns
-        -------
-        bool
-            True when there IS movement
-
-            False when there is NO movement.
-        """
-
-        result = self.image_difference(image2, image1, self.motion_intensity_threshold)
-
-        return result > self.motion_threshold
-
-    def cached_laplacian_var(self, image: np.ndarray, strategy: str = 'aggressive'):
-        """
-        Calculates variance of the Laplacian operator on DARK parts of the image. Uses hashtable to cache results.
-
-        Parameters
-        ----------
-        image : numpy.ndarray
-            Input image.
-
-        strategy : str
-            Strategy to employ when clearing hashtable (making space for new results after it has been filled).
-
-            'aggressive' : Clean entire hashtable (default).
-
-            'lazy' : Remove exactly 1 entry (the oldest one).
-
-            Any other value defaults to 'aggressive' strategy.
-
-        Returns
-        -------
-        float
-            Variance of Laplacian operator.
-
-        Notes
-        -----
-        Uses a hashtable to store previous results, as the main method, Detector.detect() may use Laplacian variance
-        to compare *blurriness* of one image multiple times. Using a cached results avoids having to compute the same
-        value for the same image multiple times, improving performance.
-        """
-
-        image_hash = subsample_hash(image)
-
-        # If result is not cached, it has to be computed
-        if image_hash not in self.lookup_table.keys():
-            if len(self.lookup_table) >= self.lookup_table_max_size:
-                if strategy == 'lazy':
-                    self.lookup_table.popitem(last=False)
-                else:
-                    self.lookup_table = OrderedDict()
-
-            # Compute Laplacian variance (of dark parts of resized image)
-            small = scale_image(image, 0.25)
-            mask = np.less(small, 50).astype(np.uint8)
-            dark = small * mask
-            self.lookup_table[image_hash] = cv2.Laplacian(dark, cv2.CV_64F).var()
-
-        # Return cached Laplacian variance of image
-        return self.lookup_table[image_hash]
-
-    def compare_image_focus(self, image1: np.ndarray, image2: np.ndarray) -> np.ndarray:
-        """
-        Compare *blurriness* between two images, return the less blurry one.
-
-        Parameters
-        ----------
-        image1 : numpy.ndarray
-
-        image2 : numpy.ndarray
+            Image from which to remove background.
 
         Returns
         -------
         numpy.ndarray
-            The less blurry image of the two.
-        """
-
-        lap_var1 = self.cached_laplacian_var(image1)
-        lap_var2 = self.cached_laplacian_var(image2)
-
-        if lap_var1 < lap_var2:
-            return image2
-        else:
-            return image1
-
-    def get_full_detection_data(self, scale: float = 0.25, window: int = 50) -> (list, list, list):
-        """
-        Create datasets from footage for analysis, visualisation or easier parameter selection (picking the perfect
-        thresholds for example).
-
-        Parameters
-        ----------
-        scale : float
-            Rescales footage down (to speed up processing).
-
-        window : int
-            Number of frames that are also considered (starts with first frame where stopped vehicle is detected).
-            Compensates for small movements and noise in footage that could otherwise cause one vehicle to yield
-            multiple images.
-
-            The higher the framerate, the longer window is recommended.
-
-        Returns
-        -------
-        (list, list, list, list)
-            Tuple of four datasets, vehicle presence, vehicle motion, vehicle blurriness and window status. All four
-            contain data-points for each frame of footage, so even the vehicle blurriness dataset contains data of
-            frames where no vehicle is present.
+            Binary mask of foreground objects.
 
         Raises
         ------
-        ValueError
-            If path to video or folder doesn't exist or cannot be read.
-
         RuntimeError
-            If failed to fetch first frame from footage.
-
-            If input frames have different resolution than the background sample.
-
-            If no FrameExtractor has been set (use treadscan.Detector.set_input())
+            If image isn't grayscale.
         """
 
-        if self.frame_extractor is None:
-            raise RuntimeError('No input has been set (use treadscan.Detector.set_input() first).')
+        if len(image.shape) != 2:
+            raise RuntimeError('BackgroundSubtractorSimple only works with grayscale images.')
 
-        if not 0 < scale <= 1:
-            raise ValueError('Invalid scale factor (must be between 1 and 0).')
+        if image.shape != self._cached_background.shape:
+            scale = image.shape[0] / self._cached_background.shape[0]
+            self._cached_background = scale_image(self.background_sample, scale)
 
-        self._scale = scale
-        height, width = self.background_sample.shape
-        blur_kernel = self._calc_kernel_size(int(width * scale), int(height * scale))
-        self._background_for_processing = self._prep_image(self.background_sample, scale, blur_kernel)
+        difference = abs(self._cached_background.astype(np.intc) - image.astype(np.intc)).astype(np.uint8)
+        mask = np.greater(difference, self.intensity_threshold).astype(np.uint8) * 255
 
-        # Acquire first frame
-        prev_frame = self.frame_extractor.next_frame()
-        if prev_frame is None:
-            raise RuntimeError('Failed fetching first frame from input. Possibly reached the end.')
-        if prev_frame.shape != self.background_sample.shape:
-            raise RuntimeError('Footage and background sample have mismatched resolution.')
-        prev_frame = self._prep_image(prev_frame, scale, blur_kernel)
+        return mask
 
-        car_presence = []
-        car_motion = []
-        car_blurriness = []
-        window_status = []
+    def getBackgroundImage(self) -> np.ndarray:
+        """
+        Implemented for compatibility (for this class to function the same as OpenCV's BackgroundSubtractor class).
 
-        last_hit = window
-        frame = self.frame_extractor.next_frame()
-        while frame is not None:
-            # Process next frame
-            if frame.shape != self.background_sample.shape:
-                raise RuntimeError('Footage and background sample have mismatched resolution.')
-            curr_frame = self._prep_image(frame, scale, blur_kernel)
+        Returns
+        -------
+        numpy.ndarray
+            Background image.
+        """
 
-            # Car presence is difference between frame and background sample
-            presence = self.image_difference(self._background_for_processing, curr_frame,
-                                             self.background_intensity_threshold)
-            # Car motion is difference between subsequent frames
-            motion = self.image_difference(prev_frame, curr_frame, self.motion_intensity_threshold)
-
-            # Car blurriness is variance of Laplacian operator over dark areas of frame
-            if motion < self.motion_threshold and presence > self.background_threshold:
-                blurriness = self.cached_laplacian_var(curr_frame)
-            # No stopped car = zero focus
-            else:
-                blurriness = 0
-
-            car_presence.append(presence)
-            car_motion.append(motion)
-            car_blurriness.append(blurriness)
-
-            # Car present and not moving
-            if presence > self.background_threshold and not motion > self.motion_threshold:
-                last_hit = 0
-            elif last_hit < window:
-                last_hit += 1
-
-            window_status.append(1 if last_hit < window else 0)
-
-            # Next frame
-            prev_frame = curr_frame
-            frame = self.frame_extractor.next_frame()
-
-        return car_presence, car_motion, car_blurriness, window_status
+        return self.background_sample
 
 
 class FrameExtractor:
@@ -816,3 +297,479 @@ class FrameExtractor:
         self.end = end
         if start is not None:
             self.frame_index = start
+
+
+class Detector:
+    """
+    Detects presence and motion of a vehicle from footage, yielding 1 image per 1 stopped vehicle.
+
+    Input can either be a folder full of images (has to be sorted) or a video/stream.
+
+    Attributes
+    ----------
+    backsub : typing.Union[BackgroundSubtractorSimple, cv2.BackgroundSubtractor]
+        Instance of a background subtractor.
+
+    frame_extractor : treadscan.FrameExtractor
+        Frame extractor used to get frames from input footage for detection.
+
+    vehicle_threshold : float
+        Minimum percentage of 'not background' pixels to evaluate image as containing a vehicle.
+
+    motion_intensity_threshold : int
+        Difference between pixels needed to be classified as 'motion' (between 2 subsequent images).
+
+    motion_threshold : float
+        Minimum percentage of 'moving' pixels to evaluate 2 subsequent images as having motion.
+
+    focus_intensity_threshold : int
+        Compare focus (or blurriness, by edge detection) in parts of image that are darker than this threshold.
+
+    lookup_table : collections.OrderedDict
+        HashTable with hashes of images and their Laplacian variance. Used when comparing blurriness of frames to avoid
+        needlessly calculating the same variance of the same image multiple times.
+
+    lookup_table_max_size : int
+        Maximum size lookup_table can grow to before old values start being purged to limit memory usage.
+
+    Methods
+    -------
+    detect(scale: float, window: int)
+        Generator which yields one image per one stopped vehicle. Uses a window, in which it detects vehicle presence
+        and whether it is moving or not. Window opens when a vehicle is detected as stopped and closes when vehicle
+        starts moving again. The generator then yields the best focused (least blurry) frame from this window.
+
+    set_params(vehicle_threshold: Optional[float], motion_threshold: Optional[float],
+               motion_intensity_threshold: Optional[int], focus_intensity_threshold: Optional[int]):
+       Sets detection parameters.
+
+    vehicle_mask(image: numpy.ndarray)
+        Returns binary mask of vehicle.
+
+    motion_mask(image1: numpy.ndarray, image2: numpy.ndarray)
+        Returns binary mask of motion between two images.
+
+    cached_laplacian_var(image: numpy.ndarray, strategy: str, scale: float)
+        Calculates Laplacian variance of image.
+
+    compare_image_focus(image1: numpy.ndarray, image2: numpy.ndarray)
+        Compares *blurriness* of the two images, returns the less blurry one.
+
+    get_full_detection_data(scale: float, window: int)
+        Generate datasets for analysis of detection parameters.
+    """
+
+    def __init__(self, backsub: Union[BackgroundSubtractorSimple, cv2.BackgroundSubtractor],
+                 frame_extractor: FrameExtractor):
+        """
+        Parameters
+        ----------
+        backsub : typing.Union[BackgroundSubtractorSimple, cv2.BackgroundSubtractor]
+            Instance of background subtractor.
+
+        frame_extractor : FrameExtractor
+            Input video/stream from which to detect stopped vehicles.
+        """
+
+        self.backsub = backsub
+        self.frame_extractor = frame_extractor
+
+        # Minimum percentage of 'not background' pixels to evaluate image as containing a vehicle
+        self.vehicle_threshold = 0.2
+
+        # Difference between pixels needed to be classified as 'motion' (between 2 subsequent images)
+        self.motion_intensity_threshold = 10
+        # Minimum percentage of 'moving' pixels to evaluate 2 subsequent images as having motion
+        self.motion_threshold = 0.02
+
+        # Compare focus (or blurriness, by edge detection) in parts of image that are darker than this threshold
+        self.focus_intensity_threshold = 50
+
+        # Structure used for caching some results that can be reused to speed up processing time
+        self.lookup_table = OrderedDict()
+        self.lookup_table_max_size = 1024
+
+    @staticmethod
+    def _calc_kernel_size(image_width: int, image_height: int) -> (int, int):
+        """
+        Calculate odd kernel size to use for blurring images (for processing footage).
+
+        Parameters
+        ----------
+        image_width : int
+
+        image_height : int
+
+        Returns
+        -------
+        (int, int)
+            Tuple of integers (square kernel of odd size).
+        """
+
+        # 1/50 of the smaller dimension
+        kernel_size = min(image_width, image_height) // 50
+        # Ensure oddness
+        kernel_size += (1 if kernel_size % 2 == 0 else 0)
+
+        return kernel_size, kernel_size
+
+    @staticmethod
+    def _prep_image(image: np.ndarray, scale: float, blur_kernel: tuple):
+        """
+        Scale and blur image for processing.
+
+        Parameters
+        ----------
+        image : numpy.ndarray
+
+        scale : float
+
+        blur_kernel : (int, int)
+
+        Returns
+        -------
+        numpy.ndarray
+            Scaled and blurred image.
+        """
+
+        image = scale_image(image, scale)
+        image = cv2.blur(image, blur_kernel)
+
+        return image
+
+    def detect(self, scale: float = 0.25, window: int = 50) -> Generator[np.ndarray, None, None]:
+        """
+        Generator which yields one frame for footage per one stopped vehicle.
+
+        Parameters
+        ----------
+        scale : float
+            Rescales footage down (to speed up processing).
+
+        window : int
+            Number of frames that are also considered (starts with first frame where stopped vehicle is detected).
+            Compensates for small movements and noise in footage that could otherwise cause one vehicle to yield
+            multiple images.
+
+            The higher the framerate, the longer window is recommended.
+
+        Yields
+        ------
+        numpy.ndarray
+            One image per one stopped vehicle from footage.
+
+        Raises
+        ------
+        ValueError
+            If scale factor is not between 1 and 0.
+
+        RuntimeError
+            If failed to fetch first frame from footage.
+        """
+
+        if not 0 < scale <= 1:
+            raise ValueError('Invalid scale factor (must be between 1 and 0).')
+
+        last_hit = window
+        best_frame = None
+
+        # Acquire first frame
+        prev_frame = self.frame_extractor.next_frame()
+        if prev_frame is None:
+            raise RuntimeError('Failed fetching first frame from input. Possibly reached the end.')
+
+        # Image processing context
+        height, width = prev_frame.shape
+        height, width = int(height * scale), int(width * scale)
+        blur_kernel = self._calc_kernel_size(width, height)
+
+        # Scale image down
+        prev_frame_pp = self._prep_image(prev_frame, scale, blur_kernel)
+
+        curr_frame = self.frame_extractor.next_frame()
+        while curr_frame is not None:
+            # Process next frame
+            curr_frame_pp = self._prep_image(curr_frame, scale, blur_kernel)
+
+            vehicle_presence = np.count_nonzero(self.vehicle_mask(curr_frame_pp)) / (width * height)
+            vehicle_motion = np.count_nonzero(self.motion_mask(curr_frame_pp, prev_frame_pp)) / (width * height)
+
+            # Open or lengthen window when stopped vehicle is detected
+            if vehicle_presence > self.vehicle_threshold and vehicle_motion < self.motion_threshold:
+                last_hit = 0
+            elif last_hit < window:
+                last_hit += 1
+
+            if last_hit < window:
+                # Get the best focused frame in window (only frames where car is present and not moving are considered)
+                if last_hit == 0:
+                    if best_frame is None:
+                        best_frame = curr_frame
+                    else:
+                        best_frame = self.compare_image_focus(curr_frame, best_frame)
+            elif best_frame is not None:
+                # Window has closed, yield best focused frame (and unset it to wait for next opened window)
+                yield best_frame
+                best_frame = None
+
+            # Next frame
+            prev_frame_pp = curr_frame_pp
+            curr_frame = self.frame_extractor.next_frame()
+
+        # Make sure to yield last frame if footage ends with window open
+        if best_frame is not None:
+            yield best_frame
+
+    def set_params(self, vehicle_threshold: Optional[float] = None, motion_threshold: Optional[float] = None,
+                   motion_intensity_threshold: Optional[int] = None, focus_intensity_threshold: Optional[int] = None):
+        """
+        Set parameters used to detect stopped vehicles(s) from footage. If parameter is None then it remains unchanged.
+
+        Parameters
+        ----------
+        vehicle_threshold : float
+            Minimum percentage of 'not background' pixels to evaluate image as containing a vehicle. (Minimum size of
+            vehicle in image).
+
+        motion_threshold : float
+            Minimum percentage of 'moving' pixels to evaluate 2 subsequent images as having motion.
+
+        motion_intensity_threshold : int
+            Difference between pixels needed to be classified as 'motion' (between 2 subsequent images).
+
+        focus_intensity_threshold : int
+            Compare focus (or blurriness) of images using edge detection (variance of the Laplacian operator) in parts
+            that are darker than this threshold.
+
+        Raises
+        ------
+        ValueError
+            When provided parameter is out of range or if path to image doesn't exist or is not readable.
+        """
+
+        if vehicle_threshold is not None:
+            if not 0 <= vehicle_threshold <= 1:
+                raise ValueError('Vehicle threshold out of range (must be between 0 and 1)')
+            self.vehicle_threshold = vehicle_threshold
+
+        if motion_threshold is not None:
+            if not 0 <= motion_threshold <= 1:
+                raise ValueError('Motion threshold out of range (must be between 0 and 1)')
+            self.motion_threshold = motion_threshold
+
+        if motion_intensity_threshold is not None:
+            if not 0 <= motion_intensity_threshold <= 255:
+                raise ValueError('Motion intensity threshold out of range (must be between 0 and 255)')
+            self.motion_intensity_threshold = motion_intensity_threshold
+
+        if focus_intensity_threshold is not None:
+            if not 0 <= focus_intensity_threshold <= 255:
+                raise ValueError('Focus intensity threshold out of range (must be between 0 and 255)')
+            self.focus_intensity_threshold = focus_intensity_threshold
+
+    def vehicle_mask(self, image: np.ndarray) -> np.ndarray:
+        """
+        Detects vehicle in image by subtracting background. Returns binary mask of vehicle.
+
+        Parameters
+        ----------
+        image : numpy.ndarray
+            Input image.
+
+        Returns
+        -------
+        numpy.ndarray
+            Binary mask of vehicle (foreground object).
+        """
+
+        return self.backsub.apply(image)
+
+    def motion_mask(self, image1: np.ndarray, image2: np.ndarray) -> np.ndarray:
+        """
+        Determines whether there is motion between two images. Returns binary mask of detected motion.
+
+        Uses self.motion_intensity_threshold as the threshold of minimum difference of pixel values to evaluate them as
+        "having changed" - moving, and self.motion_threshold as the threshold of percentage of pixels that are "moving"
+        to evaluate the images as having motion.
+
+        Parameters
+        ----------
+        image1 : numpy.ndarray
+
+        image2 : numpy.ndarray
+
+        Returns
+        -------
+        numpy.ndarray
+            Binary mask of detected motion.
+        """
+
+        difference = abs(image1.astype(np.intc) - image2.astype(np.intc)).astype(np.uint8)
+        mask = np.greater(difference, self.motion_intensity_threshold).astype(np.uint8) * 255
+
+        return mask
+
+    def cached_laplacian_var(self, image: np.ndarray, strategy: str = 'aggressive', scale: float = 0.25):
+        """
+        Calculates variance of the Laplacian operator on DARK parts of the image (darker than
+        self.focus_intensity_threshold). Uses hashtable to cache results.
+
+        Parameters
+        ----------
+        image : numpy.ndarray
+            Input image.
+
+        strategy : str
+            Strategy to employ when clearing hashtable (making space for new results after it has been filled).
+
+            'aggressive' : Clean entire hashtable (default).
+
+            'lazy' : Remove exactly 1 entry (the oldest one).
+
+            Any other value defaults to 'aggressive' strategy.
+
+        scale : float
+            Resize image before edge detection (faster for large images).
+
+        Returns
+        -------
+        float
+            Variance of Laplacian operator.
+
+        Notes
+        -----
+        Uses a hashtable to store previous results, as the main method, Detector.detect() may use Laplacian variance
+        to compare *blurriness* of one image multiple times. Using a cached results avoids having to compute the same
+        value for the same image multiple times, improving performance.
+        """
+
+        image_hash = subsample_hash(image)
+
+        # If result is not cached, it has to be computed
+        if image_hash not in self.lookup_table.keys():
+            if len(self.lookup_table) >= self.lookup_table_max_size:
+                if strategy == 'lazy':
+                    self.lookup_table.popitem(last=False)
+                else:
+                    self.lookup_table = OrderedDict()
+
+            # Compute Laplacian variance (of dark parts of resized image)
+            small = scale_image(image, scale)
+            mask = np.less(small, self.focus_intensity_threshold).astype(np.uint8)
+            dark = small * mask
+            self.lookup_table[image_hash] = cv2.Laplacian(dark, cv2.CV_64F).var()
+
+        # Return cached Laplacian variance of image
+        return self.lookup_table[image_hash]
+
+    def compare_image_focus(self, image1: np.ndarray, image2: np.ndarray) -> np.ndarray:
+        """
+        Compare *blurriness* between two images, return the less blurry one.
+
+        Parameters
+        ----------
+        image1 : numpy.ndarray
+
+        image2 : numpy.ndarray
+
+        Returns
+        -------
+        numpy.ndarray
+            The less blurry image of the two.
+        """
+
+        lap_var1 = self.cached_laplacian_var(image1)
+        lap_var2 = self.cached_laplacian_var(image2)
+
+        if lap_var1 < lap_var2:
+            return image2
+        else:
+            return image1
+
+    def get_full_detection_data(self, scale: float = 0.25, window: int = 50) -> (list, list, list, list):
+        """
+        Create datasets from footage for analysis, visualisation or easier parameter selection (picking the perfect
+        thresholds for example).
+
+        Parameters
+        ----------
+        scale : float
+            Rescales footage down (to speed up processing).
+
+        window : int
+            Number of frames that are also considered (starts with first frame where stopped vehicle is detected).
+            Compensates for small movements and noise in footage that could otherwise cause one vehicle to yield
+            multiple images.
+
+            The higher the framerate, the longer window is recommended.
+
+        Returns
+        -------
+        (list, list, list, list)
+            Tuple of four datasets, vehicle presence, vehicle motion, vehicle blurriness and window status. All four
+            contain data-points for each frame of footage, so even the vehicle blurriness dataset contains data of
+            frames where no vehicle is present.
+
+        Raises
+        ------
+        ValueError
+            If path to video or folder doesn't exist or cannot be read.
+
+        RuntimeError
+            If failed to fetch first frame from footage.
+        """
+
+        if not 0 < scale <= 1:
+            raise ValueError('Invalid scale factor (must be between 1 and 0).')
+
+        last_hit = window
+
+        presence = []
+        motion = []
+        focus = []
+        window_status = []
+
+        # Acquire first frame
+        prev_frame = self.frame_extractor.next_frame()
+        if prev_frame is None:
+            raise RuntimeError('Failed fetching first frame from input. Possibly reached the end.')
+
+        # Image processing context
+        height, width = prev_frame.shape
+        height, width = int(height * scale), int(width * scale)
+        blur_kernel = self._calc_kernel_size(width, height)
+
+        # Scale image down
+        prev_frame_pp = self._prep_image(prev_frame, scale, blur_kernel)
+
+        curr_frame = self.frame_extractor.next_frame()
+        while curr_frame is not None:
+            # Process next frame
+            curr_frame_pp = self._prep_image(curr_frame, scale, blur_kernel)
+
+            vehicle_presence = np.count_nonzero(self.vehicle_mask(curr_frame_pp)) / (width * height)
+            vehicle_motion = np.count_nonzero(self.motion_mask(curr_frame_pp, prev_frame_pp)) / (width * height)
+
+            # Vehicle present and not moving
+            if vehicle_presence > self.vehicle_threshold and vehicle_motion < self.motion_threshold:
+                # Vehicle focus is variance of Laplacian operator over dark areas of image
+                lap_var = self.cached_laplacian_var(curr_frame)
+                last_hit = 0
+            elif last_hit < window:
+                # No stopped car = zero focus
+                lap_var = 0
+                last_hit += 1
+            else:
+                # No stopped car = zero focus
+                lap_var = 0
+
+            presence.append(vehicle_presence)
+            motion.append(vehicle_motion)
+            focus.append(lap_var)
+            window_status.append(1 if last_hit < window else 0)
+
+            # Next frame
+            prev_frame_pp = curr_frame_pp
+            curr_frame = self.frame_extractor.next_frame()
+
+        return presence, motion, focus, window_status

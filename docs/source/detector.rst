@@ -9,14 +9,20 @@ Detector
 .. autoclass:: treadscan.detector.Detector
    :members:
 
-InputType
----------
+BackgroundSubtractorSimple
+------------------------
 
-.. autoclass:: treadscan.detector.InputType
+.. autoclass:: treadscan.detector.BackgroundSubtractorSimple
    :members:
 
 FrameExtractor
 --------------
 
 .. autoclass:: treadscan.detector.FrameExtractor
+   :members:
+
+InputType
+---------
+
+.. autoclass:: treadscan.detector.InputType
    :members:
