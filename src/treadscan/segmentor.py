@@ -1,9 +1,9 @@
 """
 This module is used for image segmentation, in particular to find the ellipse defining the tire position in image.
 
-RCNNSegmentor uses a region based convolutional neural network to detect car wheels, Segmentor uses basic manual image
+SegmentorRCNN uses a region based convolutional neural network to detect car wheels, Segmentor uses basic manual image
 segmentation techniques. While Segmentor is simpler, it has no chance of detecting dark rims, as they don't contrast
-with the car's tires. To use RCNNSegmentor you need to install `torch` and `torchvision`.
+with the car's tires. To use SegmentorRCNN you need to install `torch` and `torchvision`.
 """
 
 from typing import Optional
