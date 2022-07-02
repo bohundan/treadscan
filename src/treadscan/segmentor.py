@@ -14,12 +14,13 @@ import numpy as np
 import torch
 from torchvision.models.detection import keypointrcnn_resnet50_fpn
 from torchvision.models.detection.rpn import AnchorGenerator
+from torchvision.ops import nms
 from torchvision.transforms import functional
 
-from .utilities import Ellipse, ellipse_from_points, euclidean_dist
+from .utilities import Ellipse
 
 
-class RCNNSegmentor:
+class SegmentorRCNN:
     """
     Uses region based convolutional neural network model to find car wheels in images.
 
@@ -65,24 +66,27 @@ class RCNNSegmentor:
         self.model.load_state_dict(torch.load(path_to_trained_rcnn_model, map_location=self.device))
         self.model.eval()
 
-    def find_ellipse(self, image: np.ndarray, confidence_threshold: float = 0.8) -> Optional[tuple]:
+    def find_keypoints(self, image: np.ndarray, confidence_threshold: float = 0.8, iou_threshold: float = 0.1) -> list:
         """
+        Finds ALL tires in image. Returns list of keypoints.
+
         Parameters
         ----------
         image : numpy.ndarray
-            Grayscale or BGR image on which processing operations will be performed.
+            Grayscale image on which processing operations will be performed.
 
         confidence_threshold : float
             Minimum confidence of RCNN model in its prediction to be considered valid.
 
+        iou_threshold : float
+            Maximum IoU for each prediction bounding box. Predictions with higher IoUs are discarded. (Vehicle tires are
+            unlikely to intersect each other, low thresholds work well)
+
         Returns
         -------
-        (treadscan.Ellipse, int, (int, int))
-            Ellipse defined by center coordinates, size and rotation (in degrees), tire sidewall height and tire limit
-            (point on inner - right side of tire)
-
-        None
-            If no ellipse was found.
+        list
+            List of tuples, each tuple consists of 5 tire keypoints (rim top, bottom, 3rd rim point, tire sidewall top,
+            tire width). Each keypoint is a tuple of X and Y pixel coordinates.
 
         Raises
         ------
@@ -93,9 +97,6 @@ class RCNNSegmentor:
         if image.shape[0] == 0 or image.shape[1] == 0:
             raise ValueError('Image is zero pixels tall/wide.')
 
-        if len(image.shape) != 2:
-            image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
         # Convert to tensor
         tensor = functional.to_tensor(image)
         # Add batch dimension
@@ -103,42 +104,21 @@ class RCNNSegmentor:
 
         # Turn off context manager for gradient calculation (memory saving)
         with torch.no_grad():
+            # Output is a list of dictionaries (list of a single dictionary in this case)
             output = self.model(tensor)
 
-        scores = output[0]['scores'].detach().cpu().numpy()
-        scores = [score for score in scores if score > confidence_threshold]
+        # Consider only predictions with confidence score higher than threshold
+        best_scores = np.where(output[0]['scores'].detach().cpu().numpy() > confidence_threshold)[0].tolist()
+        # Non-maximum suppression (low IoU threshold works well, vehicle tires should rarely intersect)
+        indexes = nms(boxes=output[0]['boxes'][best_scores], scores=output[0]['scores'][best_scores],
+                      iou_threshold=iou_threshold).detach().cpu().numpy()
 
-        # No hits
-        if len(scores) == 0:
-            return None
-        else:
-            # Detections are sorted by score, highest is first
-            best = 0
-            best_score = -1
+        keypoints = []
+        for i in indexes:
+            points = output[0]['keypoints'][i].detach().cpu().numpy()
+            keypoints.append(tuple([(int(p[0]), int(p[1])) for p in points]))
 
-            # Compare first 3 best results
-            for i in range(0, min(len(scores), 3)):
-                keypoints = []
-                for point in output[0]['keypoints'][i].detach().cpu().numpy():
-                    keypoints.append((int(point[0]), int(point[1])))
-                # Create ellipse from detected keypoints
-                ellipse = ellipse_from_points(keypoints[0], keypoints[1], keypoints[2])
-
-                # Calculate score of modelled ellipse (confidence * ellipse height), because we want the closest one,
-                # which in turn gives tread with the highest resolution (closer tire is larger)
-                score = scores[i] * ellipse.height
-                if score > best_score:
-                    best_score = score
-                    best = i
-
-            # Return best result
-            keypoints = []
-            for point in output[0]['keypoints'][best].detach().cpu().numpy():
-                keypoints.append((int(point[0]), int(point[1])))
-            ellipse = ellipse_from_points(keypoints[0], keypoints[1], keypoints[2])
-            sidewall = int(euclidean_dist(keypoints[0], keypoints[3]))
-
-            return ellipse, sidewall, keypoints[4]
+        return keypoints
 
 
 class Segmentor:
