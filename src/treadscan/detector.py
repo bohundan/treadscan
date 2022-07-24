@@ -46,7 +46,7 @@ from collections import OrderedDict
 from enum import Enum
 from os import listdir
 from os.path import isfile, isdir, join
-from typing import Generator, Optional, Union
+from typing import Generator, Optional
 
 import cv2
 import numpy as np
@@ -72,103 +72,6 @@ class InputType(Enum):
     IMAGE_FOLDER = 1
     VIDEO = 2
     STREAM = 2
-
-
-class BackgroundSubtractorSimple:
-    """
-    Simple background subtractor immune to *sleeping person* phenomenon (an object that stops moving won't become a part
-    of the background). This subtractor doesn't adapt to changing background and needs to be provided with one manually.
-    Only works with grayscale images.
-
-    Same interface as OpenCV's BackgroundSubtractor
-    (https://docs.opencv.org/3.4/d7/df6/classcv_1_1BackgroundSubtractor.html).
-
-    Attributes
-    ----------
-    background_sample : numpy.ndarray
-        Image of empty background (without foreground objects present).
-
-    intensity_threshold : int
-        Minimal difference between pixel values to be subtracted. If the difference is smaller than this threshold, the
-        pixel is regarded as a *background pixel*.
-
-    Methods
-    -------
-    apply(image: numpy.ndarray)
-        Returns mask of foreground objects.
-
-    getBackgroundImage()
-        Returns background image.
-    """
-
-    def __init__(self, background_sample: np.ndarray, intensity_threshold: int = 50):
-        """
-        Parameters
-        ----------
-        background_sample : numpy.ndarray
-            Image of empty background (without foreground objects present).
-
-        intensity_threshold : int
-            Minimal difference between pixel values to be subtracted. If the difference is smaller than this threshold,
-            the pixel is regarded as a *background pixel*.
-
-        Raises
-        ------
-        ValueError
-            When background_sample isn't grayscale.
-        """
-
-        if len(background_sample.shape) != 2:
-            raise ValueError('BackgroundSubtractorSimple only works with grayscale images.')
-
-        self.background_sample = background_sample
-        self.intensity_threshold = intensity_threshold
-
-        self._cached_background = self.background_sample
-
-    def apply(self, image: np.ndarray) -> np.ndarray:
-        """
-        Remove background from image.
-
-        Parameters
-        ----------
-        image : numpy.ndarray
-            Image from which to remove background.
-
-        Returns
-        -------
-        numpy.ndarray
-            Binary mask of foreground objects.
-
-        Raises
-        ------
-        RuntimeError
-            If image isn't grayscale.
-        """
-
-        if len(image.shape) != 2:
-            raise RuntimeError('BackgroundSubtractorSimple only works with grayscale images.')
-
-        if image.shape != self._cached_background.shape:
-            scale = image.shape[0] / self._cached_background.shape[0]
-            self._cached_background = scale_image(self.background_sample, scale)
-
-        difference = abs(self._cached_background.astype(np.intc) - image.astype(np.intc)).astype(np.uint8)
-        mask = np.greater(difference, self.intensity_threshold).astype(np.uint8) * 255
-
-        return mask
-
-    def getBackgroundImage(self) -> np.ndarray:
-        """
-        Implemented for compatibility (for this class to function the same as OpenCV's BackgroundSubtractor class).
-
-        Returns
-        -------
-        numpy.ndarray
-            Background image.
-        """
-
-        return self.background_sample
 
 
 class FrameExtractor:
@@ -299,6 +202,113 @@ class FrameExtractor:
             self.frame_index = start
 
 
+class BackgroundSubtractorSimple(cv2.BackgroundSubtractor):
+    """
+    Simple background subtractor immune to *sleeping person* phenomenon (an object that stops moving won't become a part
+    of the background). This subtractor doesn't adapt to changing background and needs to be provided with one manually.
+    Only works with grayscale images.
+
+    Same interface as OpenCV's BackgroundSubtractor
+    (https://docs.opencv.org/3.4/d7/df6/classcv_1_1BackgroundSubtractor.html).
+
+    Attributes
+    ----------
+    background_sample : numpy.ndarray
+        Image of empty background (without foreground objects present).
+
+    intensity_threshold : int
+        Minimal difference between pixel values to be subtracted. If the difference is smaller than this threshold, the
+        pixel is regarded as a *background pixel*.
+
+    Methods
+    -------
+    apply(image: numpy.ndarray)
+        Returns mask of foreground objects.
+
+    getBackgroundImage()
+        Returns background image.
+    """
+
+    def __init__(self, background_sample: np.ndarray, intensity_threshold: int = 50):
+        """
+        Parameters
+        ----------
+        background_sample : numpy.ndarray
+            Image of empty background (without foreground objects present).
+
+        intensity_threshold : int
+            Minimal difference between pixel values to be subtracted. If the difference is smaller than this threshold,
+            the pixel is regarded as a *background pixel*.
+
+        Raises
+        ------
+        ValueError
+            When background_sample isn't grayscale.
+        """
+
+        super().__init__()
+        if len(background_sample.shape) != 2:
+            raise ValueError('BackgroundSubtractorSimple only works with grayscale images.')
+
+        self.background_sample = background_sample
+        self.intensity_threshold = intensity_threshold
+
+        self._cached_background = self.background_sample
+
+    def apply(self, image: np.ndarray, fgmask=None, learningRate: float = -1) -> np.ndarray:
+        """
+        Remove background from image.
+
+        Parameters
+        ----------
+        image : numpy.ndarray
+            Image from which to remove background.
+
+        fgmask : None
+
+        learningRate : float
+            Does nothing in the case of BackgroundSubtractorSimple.
+
+        Returns
+        -------
+        numpy.ndarray
+            Binary mask of foreground objects.
+
+        Raises
+        ------
+        RuntimeError
+            If image isn't grayscale.
+        """
+
+        if len(image.shape) != 2:
+            raise RuntimeError('BackgroundSubtractorSimple only works with grayscale images.')
+
+        if image.shape != self._cached_background.shape:
+            scale = image.shape[0] / self._cached_background.shape[0]
+            self._cached_background = scale_image(self.background_sample, scale)
+
+        difference = abs(self._cached_background.astype(np.intc) - image.astype(np.intc)).astype(np.uint8)
+        mask = np.greater(difference, self.intensity_threshold).astype(np.uint8) * 255
+
+        return mask
+
+    def getBackgroundImage(self, backgroundImage=None) -> np.ndarray:
+        """
+        Implemented for compatibility.
+
+        Parameters
+        ----------
+        backgroundImage : None
+
+        Returns
+        -------
+        numpy.ndarray
+            Background image.
+        """
+
+        return self.background_sample
+
+
 class Detector:
     """
     Detects presence and motion of a vehicle from footage, yielding 1 image per 1 stopped vehicle.
@@ -307,7 +317,7 @@ class Detector:
 
     Attributes
     ----------
-    backsub : typing.Union[BackgroundSubtractorSimple, cv2.BackgroundSubtractor]
+    backsub : cv2.BackgroundSubtractor
         Instance of a background subtractor.
 
     frame_extractor : treadscan.FrameExtractor
@@ -359,12 +369,11 @@ class Detector:
         Generate datasets for analysis of detection parameters.
     """
 
-    def __init__(self, backsub: Union[BackgroundSubtractorSimple, cv2.BackgroundSubtractor],
-                 frame_extractor: FrameExtractor):
+    def __init__(self, backsub: cv2.BackgroundSubtractor, frame_extractor: FrameExtractor):
         """
         Parameters
         ----------
-        backsub : typing.Union[BackgroundSubtractorSimple, cv2.BackgroundSubtractor]
+        backsub : cv2.BackgroundSubtractor
             Instance of background subtractor.
 
         frame_extractor : FrameExtractor
@@ -450,7 +459,6 @@ class Detector:
             Number of frames that are also considered (starts with first frame where stopped vehicle is detected).
             Compensates for small movements and noise in footage that could otherwise cause one vehicle to yield
             multiple images.
-
             The higher the framerate, the longer window is recommended.
 
         Yields
