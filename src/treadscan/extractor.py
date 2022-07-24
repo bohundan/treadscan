@@ -2,666 +2,427 @@
 This module is used for tread extraction (unwrapping) given the image and the ellipse defining the vehicle's rim in
 image.
 
-Extractor class uses an image and an ellipse in the image, found by `Segmentor`, which defines the vehicle's rim, to
-extract (unwrap) the tire tread as a separate image. First it corrects the rotation and then, using perspective
-transformations, it creates bounding ellipses around the vehicle's tire. Tread unwrapping is then done by "walking"
-along and between the two ellipses.
+TireModel class defines a tire in an image. It can be created using 5 keypoints or just one ellipse (which represents
+the vehicle's rim, tire sidewall and width is then approximated from the rim diameter.)
 """
 
-from enum import Enum
-import multiprocessing
-from typing import Optional
+from typing import Union
 
-import cv2
-import numpy as np
-from .utilities import Ellipse, euclidean_dist
+from .utilities import *
 
 
-class CameraPosition(Enum):
+class TireModel:
     """
-    Enum class specifying position from which vehicle tire (rim) has been captured.
-
-    As most countries drive on the right side of the road, the safest placement would be on the right side of the road
-    also (on the sidewalk instead of the middle of the road). And thus, the position would be on the RIGHT. This is
-    important in tread extraction because of where the tread is visible would be different if the image is mirrored,
-    as it would be normally be on the right side of the ellipse defining a vehicle's rim.
-
-    So if the image of the vehicle is taken from the left side, it will simply be mirrored before extracting the tread
-    and the tread mirrored again afterwards to correct orientation.
-
-    FRONT_RIGHT :
-        Camera facing vehicle from the front, on the vehicle's right side, capturing the RIGHT FRONT tire.
-
-        (Right side tire captured from the front).
-
-    FRONT_LEFT :
-        Camera facing vehicle from the front, on the vehicle's left side, capturing the LEFT FRONT tire.
-
-        (Left side tire captured from the front).
-
-    BACK_RIGHT :
-        Camera is BEHIND the vehicle, on the vehicle's right side, capturing the RIGHT BACK tire.
-
-        (Right side tire captured from the back).
-
-    BACK_LEFT :
-        Camera is BEHIND the vehicle, on the vehicle's left side, capturing the LEFT BACK tire.
-
-        (Left side tire captured from the back).
-    """
-
-    FRONT_RIGHT = 1
-    FRONT_LEFT = 2
-    BACK_RIGHT = 2
-    BACK_LEFT = 1
-
-
-class Extractor:
-    """
-    Extrapolates tire tread location in image from ellipse of wheel. Contains method for unwrapping the tire tread as
-    a new separate image.
+    Model representing a tire. Consists of two ellipses - outer and inner.
 
     Attributes
     ----------
-    image : numpy.ndarray
-        Image from which to extract tread.
+    image_size : (int, int)
+        Height and width of image in which the TireModel is placed (required for perspective transformations).
 
-    ellipse : treadscan.Ellipse
-        Ellipse defined by center, size and rotation, which describes vehicle's tire (rim) position in image.
+    main_ellipse : treadscan.Ellipse
+        Ellipse defined by the wheel rim.
+
+    outer_ellipse : treadscan.Ellipse
+        Ellipse defined by the outer tire perimeter.
+
+    inner_ellipse : treadscan.Ellipse
+        Ellipse defined by the inner tire perimeter.
+
+    beta_angle : float
+        Angle of tire (in degrees) relative to camera's point of view.
+
+    tire_sidewall : int
+        Height of tire sidewall (in pixels).
+
+    tire_width : int
+        Tire width (in pixels).
 
     Methods
     -------
-    perspective_transform_y_axis(angle: float, x: int, y: int)
-        Returns new coordinates (position of original in image rotated around center Y axis).
+    from_keypoints(t: (int, int), b: (int, int), r: (int, int), s: (int, int), w: (int, int))
+        Initializes TireModel using 5 keypoints.
 
-    get_tire_bounding_ellipses(tire_width: int, tire_sidewall: int, outer_extend: int, tire_limit: Optional[tuple])
-        Returns two ellipses, between which the tire occurs in (mirrored) image.
+    from_main_ellipse(main_ellipse: treadscan.Ellipse, tire_sidewall: int, tire_width: int, left_oriented: bool)
+        Initializes TireModel using main ellipse (which is defined by the wheel rim).
 
-    visualise_bounding_ellipses(tire_width: int, tire_sidewall: int, outer_extend: int, start: float, end: float,
-                                tire_bounding_ellipses: Optional[tuple])
-        Returns image with drawn tire model created from bounding ellipses.
+    draw(image: numpy.ndarray, color: Union[int, tuple], thickness: int, lineType: int)
+        Draws TireModel on image.
 
-    extract_tread(final_width: int, tire_width: int, start: float, end: float,
-                  tire_bounding_ellipses: Optional[tuple], cores: int)
-        Returns new image with extracted tire tread (unwrapped).
+    bounding_box()
+        Returns top left and bottom right points of TireModel's bounding box.
+
+    unwrap(image: numpy.ndarray, start: int, end: int):
+        Unwraps tread into a rectangle from an image.
     """
 
-    def __init__(self, image: np.ndarray, ellipse: Ellipse, position: CameraPosition = CameraPosition.FRONT_RIGHT):
+    def __init__(self, image_size: (int, int)):
         """
         Parameters
         ----------
-        image : numpy.ndarray
-            Original image from which to extract tire tread.
-
-        ellipse : treadscan.Ellipse
-            Ellipse defined by center, size and rotation, which describes vehicle's tire (rim) position in image.
+        image_size : (int, int)
+            Height and width of image.
         """
 
-        self.main_ellipse = ellipse
-        self.image = image
+        self.image_size = image_size
+        self.main_ellipse = None
+        self.outer_ellipse = None
+        self.inner_ellipse = None
+        self.beta_angle = None
+        self.tire_sidewall = None
+        self.tire_width = None
 
-        # First transformation: unifying tread position relative to ellipse (tread always on the right side)
-        if position in [CameraPosition.FRONT_LEFT, CameraPosition.BACK_RIGHT]:
-            # Flip image horizontally (around Y axis)
-            self.image = cv2.flip(self.image, 1)
-            # Correct ellipse position accordingly
-            self.main_ellipse.cx = self.image.shape[1] - self.main_ellipse.cx
-
-        # Second transformation: correcting rotation
-        angle = self.main_ellipse.angle
-        if angle >= 90:
-            angle -= 180
-        rotation_matrix = cv2.getRotationMatrix2D(self.main_ellipse.get_center(), angle, scale=1.0)
-        self.image = cv2.warpAffine(self.image, rotation_matrix, self.image.shape[1::-1], flags=cv2.INTER_LANCZOS4)
-        self.main_ellipse.angle = 0
-
-        # Remember if image is flipped
-        self.flipped = position in [CameraPosition.FRONT_LEFT, CameraPosition.BACK_RIGHT]
-
-    def perspective_transform_y_axis(self, angle: float, x: int, y: int) -> (int, int):
-        r"""
-        Perspective rotation around Y axis (center of image), takes original X and Y coordinates, returns transformed.
+    def from_keypoints(self, t: (int, int), b: (int, int), r: (int, int), s: (int, int), w: (int, int)):
+        """
+        Initializes TireModel using 5 keypoints.
 
         Parameters
         ----------
-        angle : float
-            Angle of rotation in degrees (rotation around Y axis).
+        t : (int, int)
+            Top of rim.
 
-        x : int
-            Original X coordinate.
+        b : (int, int)
+            Bottom of rim.
 
-        y : int
-            Original Y coordinate.
+        r : (int, int)
+            Third point on the rim perimeter.
 
-        Returns
-        -------
-        (int, int)
-            Tuple of transformed X and Y coordinates (position after perspective transformation).
+        s : (int, int)
+            Point above `t`, where tire sidewall ends.
 
-        Notes
-        -----
-        :math:`A1` is a projection matrix from 2D to 3D, :math:`RY` is a rotation matrix (around the Y axis),
-        :math:`T` is the translation matrix and :math:`A2` is a projection matrix back from 3D to 2D. [1]_
-
-        .. math::
-
-            A1 = \begin{pmatrix}
-                    1 & 0 & -\frac{w}{2} \\
-                    0 & 1 & -\frac{h}{2} \\
-                    0 & 0 &       1      \\
-                    0 & 0 &       1
-                 \end{pmatrix}
-
-            RY = \begin{pmatrix}
-                    \cos(\varphi) & 0 & -\sin(\varphi) & 0 \\
-                        0      & 1 &      0      & 0 \\
-                    \sin(\varphi) & 0 & \cos(\varphi)  & 0 \\
-                        0      & 0 &      0      & 1
-                 \end{pmatrix}
-
-            T = \begin{pmatrix}
-                    1 & 0 & 0 \\
-                    0 & 1 & 0 \\
-                    0 & 0 & f \\
-                    0 & 0 & 1
-                 \end{pmatrix}
-
-            A2 = \begin{pmatrix}
-                    f & 0 & \frac{w}{2} & 0 \\
-                    0 & f & \frac{h}{2} & 0 \\
-                    0 & 0 &      1      & 0
-                 \end{pmatrix}
-
-        :math:`f` is calculated as :math:`\sqrt{\texttt{width}^2 + \texttt{height}^2}`.
-
-        :math:`\varphi` is the angle of rotation around the Y axis.
-
-        The final transformation matrix is then given by
-
-        .. math:: M = \Big( A2 \cdot \big( T \cdot ( R \cdot A1 ) \big) \Big).
-
-        And the transformation of the points :math:`x` and :math:`y` is [2]_
-
-        .. math::
-
-            \texttt{dst}(x, y) =
-            \left(
-                \frac{M_{11}x + M_{12}y + M_{13}}{M_{31}x + M_{32}y + M_{33}},
-                \frac{M_{21}x + M_{22}y + M_{23}}{M_{31}x + M_{32}y + M_{33}}
-            \right).
-
-        .. [1] M. Jepson, https://jepsonsblog.blogspot.com/2012/11/rotation-in-3d-using-opencvs.html
-           28 November 2012
-        .. [2] OpenCV documentation,
-           https://docs.opencv.org/4.x/da/d54/group__imgproc__transform.html#gaf73673a7e8e18ec6963e3774e6a94b87
-           3 February 2022
+        w : (int, int)
+            Point on the inner side of tire.
         """
 
-        # Image height and width
-        h, w = self.image.shape[0], self.image.shape[1]
-        # Focal point
-        f = np.sqrt(w**2 + h**2)
+        self.main_ellipse = ellipse_from_points(t, b, r)
+        self.beta_angle = self._calculate_tire_angle()
 
-        phi = np.radians(angle)
+        self.outer_ellipse = Ellipse(self.main_ellipse.cx, self.main_ellipse.cy, self.main_ellipse.width,
+                                     self.main_ellipse.height, self.main_ellipse.angle)
+        self.outer_ellipse.fit_to_intersect(s)
 
-        # Transformation matrix, explained in notes section
-        m_11 = f * np.cos(phi) + (w / 2) * np.sin(phi)
-        m_12 = 0
-        m_13 = f * ((-w / 2) * np.cos(phi) - np.sin(phi)) + (w / 2) * ((-w / 2) * np.sin(phi) + np.cos(phi) + f)
-        m_21 = (h / 2) * np.sin(phi)
-        m_22 = f
-        m_23 = f * (-h / 2) + (h / 2) * ((-w / 2) * np.sin(phi) + np.cos(phi) + f)
-        m_31 = np.sin(phi)
-        m_32 = 0
-        m_33 = (-w / 2) * np.sin(phi) + np.cos(phi) + f
+        if self.outer_ellipse.is_point_inside(w):
+            self.tire_width = 0
+        else:
+            self.tire_width = int(self.outer_ellipse.horizontal_distance_between_point(w))
 
-        # Transformed coordinates
-        x_ = (m_11 * x + m_12 * y + m_13) / (m_31 * x + m_32 * y + m_33)
-        y_ = (m_21 * x + m_22 * y + m_23) / (m_31 * x + m_32 * y + m_33)
+        # Inner ellipse is on the left side of outer ellipse if the point on the inner side is left of ellipse center.
+        left_oriented = w[0] < self.main_ellipse.cx
+        self.inner_ellipse = self._create_inner_ellipse(left_oriented)
 
-        return x_, y_
-
-    def get_tire_bounding_ellipses(self, tire_width: int = 0, tire_sidewall: int = 0, outer_extend: int = 0,
-                                   tire_limit: Optional[tuple] = None) -> (Ellipse, Ellipse):
+    def from_main_ellipse(self, main_ellipse: Ellipse, tire_sidewall: int = 0, tire_width: int = 0,
+                          left_oriented: bool = False):
         """
-        Create and return outer and inner ellipses surrounding the vehicle's tire.
-
-        These ellipses may be flipped the wrong way around (outer is always on the left and inner is always on the
-        right) as there is no easy way to determine on which side of the ellipse is the tire tread visible,
-        refer to `CameraPosition`.
+        Initializes TireModel using main ellipse (which is defined by the wheel rim).
 
         Parameters
         ----------
-        tire_width : int
-            Tire width in pixels, 0 for automatic (half of wheel diameter).
+        main_ellipse : treadscan.Ellipse
+            Ellipse defined by wheel rim.
 
         tire_sidewall : int
-            Height of tire sidewall in pixels, for automatic (half of tire width).
+            Height of tire sidewall in pixels. If 0, then the sidewall height is approximated as 1/5 of the wheel
+            diameter.
 
-        outer_extend : int
-            If non-zero, extend outer ellipse (outwards) by this much. To make sure that entirety of tire tread is
-            visible between bounding ellipses.
+        tire_width : int
+            Width of tire in pixels. If 0, then the tire width is approximated as 1/2 of the wheel diameter.
 
-        tire_limit : Optional[tuple]
-            Optional point on the inner side of tire, giving the tire_width.
-
-        Returns
-        -------
-        (treadscan.Ellipse, treadscan.Ellipse)
-            Tuple of outer and inner ellipses, each defined by center, height and width.
+        left_oriented : bool
+            Defines if the inner side is on the left rather than the right. (TireModel is defined by outer and inner
+            ellipses, inner ellipse is on the 'inside' of the wheel well, while the outer ellipse is visible.)
         """
 
-        if tire_width < 0:
-            raise ValueError('Tire width has to be greater than 0.')
-        if tire_sidewall < 0:
-            raise ValueError('Tire sidewall has to be greater than 0.')
+        self.main_ellipse = main_ellipse
+        self.beta_angle = self._calculate_tire_angle()
 
-        if tire_width != 0 and tire_limit is not None:
-            raise ValueError('Tire width and tire limit are both set, use only one of these parameters to set width.')
-        if tire_limit is not None and len(tire_limit) != 2:
-            raise ValueError('Tire limit must be a point, a tuple of integers.')
+        self.tire_sidewall = tire_sidewall
+        if self.tire_sidewall == 0:
+            self.tire_sidewall = self.main_ellipse.height // 5
+        self.outer_ellipse = self._create_outer_ellipse()
+
+        self.tire_width = tire_width
+        if self.tire_width == 0:
+            self.tire_width = self.main_ellipse.height // 2
+        self.inner_ellipse = self._create_inner_ellipse(left_oriented)
+
+    def _calculate_tire_angle(self) -> float:
+        """
+        Returns
+        -------
+        float
+            Angle of rotation of the tire in degrees (relative to camera's point of view).
+
+        Raises
+        ------
+        RuntimeError
+            When necessary attributes haven't been set.
+        """
+
+        if self.main_ellipse is None:
+            raise RuntimeError('Main ellipse has not been set, cannot calculate tire angle.')
 
         # Calculate angle of wheel from ratio of ellipse axes, clip between -1 and 1 for arccos (ellipse should always
-        # be taller rather than wider anyway)
+        # be taller rather than wider)
         ratio = np.clip(self.main_ellipse.width / self.main_ellipse.height, -1, 1)
         alpha = np.degrees(np.arccos(ratio))
-        beta = 90 - alpha
-        # Example: 205/55 R 16, width is about half the wheel diameter, sidewall about quarter the wheel diameter
-        #          205 mm tire width
-        #          205 mm * 0.55 = 113 mm tire sidewall
-        #          16inch = 406 mm wheel diameter
-        if tire_width == 0:
-            tire_width = int(self.main_ellipse.height / 2)
-        if tire_sidewall == 0:
-            # After some experimentation, it seems 1/5 is a better factor than 1/4
-            tire_sidewall = int(self.main_ellipse.height / 5)
+        return 90 - alpha
 
-        # Extend main ellipse to match tire perimeter
-        height2 = self.main_ellipse.height + tire_sidewall * 2
-        size_coefficient = height2 / self.main_ellipse.height
-        width2 = int(self.main_ellipse.width * size_coefficient)
-        # Center stays the same
-        tire_ellipse = Ellipse(self.main_ellipse.cx, self.main_ellipse.cy, width2, height2, angle=0)
-
-        def perspective_shift_ellipse(ellipse: Ellipse, shift_by: int) -> Ellipse:
-            """
-            Apply perspective shift to ellipse.
-
-            Parameters
-            ----------
-            ellipse : treadscan.Ellipse
-                Ellipse which to transform.
-
-            shift_by : int
-                How far to move ellipse (negative number to move left, positive to move right) on shifted X axis.
-                (Along perspective rotated X axis - rotated around center Y axis).
-
-            Returns
-            -------
-            treadscan.Ellipse
-                New ellipse moved across the (rotated) X axis.
-            """
-
-            # Shift these 3 points, then use them to recreate ellipse
-            top = ellipse.point_on_ellipse(deg=-90)
-            right = ellipse.point_on_ellipse(deg=0)
-            # left = ellipse.point_on_ellipse(deg=-180)
-            bottom = ellipse.point_on_ellipse(deg=90)
-
-            # Shifted points
-            top = int(top[0]) + shift_by, int(top[1])
-            right = int(right[0]) + shift_by, int(right[1])
-            bottom = int(bottom[0]) + shift_by, int(bottom[1])
-
-            # Perspective transform
-            center_offset = self.image.shape[1] // 2 - int(ellipse.point_on_ellipse(deg=-90)[0])
-            top = self.perspective_transform_y_axis(beta, top[0] + center_offset, top[1])
-            top = top[0] - center_offset, top[1]
-            center_offset = self.image.shape[1] // 2 - int(ellipse.point_on_ellipse(deg=0)[0])
-            right = self.perspective_transform_y_axis(beta, right[0] + center_offset, right[1])
-            right = right[0] - center_offset, right[1]
-            center_offset = self.image.shape[1] // 2 - int(ellipse.point_on_ellipse(deg=90)[0])
-            bottom = self.perspective_transform_y_axis(beta, bottom[0] + center_offset, bottom[1])
-            bottom = bottom[0] - center_offset, bottom[1]
-
-            # Create new ellipse
-            cx = (top[0] + bottom[0]) // 2
-            cy = right[1]
-            width = abs(right[0] - cx) * 2
-            height = bottom[1] - top[1]
-            shifted_ellipse = Ellipse(cx, cy, width, height, angle=0)
-
-            return shifted_ellipse
-
-        # If tire_limit is set, use it to calculate tire_width
-        if tire_limit is not None:
-            tire_width = int(tire_ellipse.horizontal_distance_between_point(*tire_limit))
-
-        # Shift inner ellipse by tire_width
-        inner_ellipse = perspective_shift_ellipse(tire_ellipse, tire_width)
-        inner_ellipse.cx = tire_ellipse.cx + tire_width
-
-        # Shift outer ellipse (in the opposite direction) by outer_extend
-        outer_ellipse = perspective_shift_ellipse(tire_ellipse, -outer_extend)
-
-        return outer_ellipse, inner_ellipse
-
-    def visualise_bounding_ellipses(self, tire_width: int = 0, tire_sidewall: int = 0, outer_extend: int = 0,
-                                    start: float = -10, end: float = 80,
-                                    tire_bounding_ellipses: Optional[tuple] = None) -> np.ndarray:
+    def _create_outer_ellipse(self) -> Ellipse:
         """
-        Creates color (BGR) image with drawn tire model.
+        Returns
+        -------
+        treadscan.Ellipse
+            Ellipse extended (by tire sidewall) from main ellipse (wheel rim) to match outer tire perimeter.
+
+        Raises
+        ------
+        RuntimeError
+            When necessary attributes haven't been set.
+        """
+
+        if self.main_ellipse is None or self.tire_sidewall is None:
+            raise RuntimeError('Main ellipse or tire sidewall has not been set, cannot create outer ellipse.')
+
+        # Extend by tire sidewall
+        height = int(self.main_ellipse.height + self.tire_sidewall * 2)
+        size_coefficient = height / self.main_ellipse.height
+        width = int(self.main_ellipse.width * size_coefficient)
+        # Center stays the same
+        return Ellipse(self.main_ellipse.cx, self.main_ellipse.cy, width, height, self.main_ellipse.angle)
+
+    def _create_inner_ellipse(self, left_oriented: bool) -> Ellipse:
+        """
+        Parameters
+        ----------
+        left_oriented : bool
+            If true, inner ellipse will be on the left side of outer ellipse.
+
+        Returns
+        -------
+        treadscan.Ellipse
+            Ellipse defined by the inner tire perimeter.
+
+        Raises
+        ------
+        RuntimeError
+            When necessary attributes haven't been set.
+        """
+
+        if self.image_size is None or self.outer_ellipse is None or self.tire_width is None:
+            raise RuntimeError('Image size or outer ellipse or tire width has not been set, cannot create inner '
+                               'ellipse.')
+
+        temp_ellipse = Ellipse(self.outer_ellipse.cx, self.outer_ellipse.cy, self.outer_ellipse.width,
+                               self.outer_ellipse.height, angle=0)
+        top = temp_ellipse.point_on_ellipse(deg=-90)
+        right = temp_ellipse.point_on_ellipse(deg=0)
+        # left = self.outer_ellipse.point_on_ellipse(deg=-180)
+        bottom = temp_ellipse.point_on_ellipse(deg=90)
+
+        relative_width = self.tire_width
+        if left_oriented:
+            relative_width *= - 1
+
+        # Shifted points
+        top = int(top[0]) + relative_width, int(top[1])
+        right = int(right[0]) + relative_width, int(right[1])
+        bottom = int(bottom[0]) + relative_width, int(bottom[1])
+
+        # Perspective transform
+        beta = self.beta_angle
+
+        center_offset = self.image_size[1] // 2 - int(temp_ellipse.point_on_ellipse(deg=-90)[0])
+        top = perspective_transform_y_axis(beta, (top[0] + center_offset, top[1]),
+                                           (self.image_size[0], self.image_size[1]))
+        top = top[0] - center_offset, top[1]
+        center_offset = self.image_size[1] // 2 - int(temp_ellipse.point_on_ellipse(deg=0)[0])
+        right = perspective_transform_y_axis(beta, (right[0] + center_offset, right[1]),
+                                             (self.image_size[0], self.image_size[1]))
+        right = right[0] - center_offset, right[1]
+        center_offset = self.image_size[1] // 2 - int(temp_ellipse.point_on_ellipse(deg=90)[0])
+        bottom = perspective_transform_y_axis(beta, (bottom[0] + center_offset, bottom[1]),
+                                              (self.image_size[0], self.image_size[1]))
+        bottom = bottom[0] - center_offset, bottom[1]
+
+        # Create new ellipse from transformed points
+        cx = (top[0] + bottom[0]) // 2
+        cy = right[1]
+        width = abs(right[0] - cx) * 2
+        height = abs(bottom[1] - top[1])
+
+        cx = temp_ellipse.cx + relative_width
+        cx, cy = rotate_point((cx, cy), self.outer_ellipse.angle, self.main_ellipse.get_center())
+
+        return Ellipse(cx, cy, width, height, angle=self.outer_ellipse.angle)
+
+    def draw(self, image: np.ndarray, color: Union[int, tuple], thickness: int = 1,
+             lineType: int = cv2.LINE_8) -> np.ndarray:
+        """
+        Draws TireModel on image.
 
         Parameters
         ----------
-        tire_width : int
-            Width of tire in original image (in pixels). Is only used when auto-generating tire bounding ellipses.
+        image: numpy.ndarray
+            Image on which to draw on.
 
-            0 for automatic (overestimates on purpose to avoid missing tread).
+        color: Union[int, tuple]
+            Color of resulting drawing (grayscale color or BGR, RGB... depending on image color scheme)
 
-        tire_sidewall : int
-            Height of tire sidewall in pixels, for automatic (half of tire width).
+        thickness: int
+            Thickness of the drawn TireModel.
 
-            0 for automatic (quarter of wheel diameter).
-
-        outer_extend : int
-            If non-zero, extend outer ellipse (outwards) by this much. To make sure that entirety of tire tread is
-            visible between bounding ellipses.
-
-        start : float
-            Starting angle of extraction (must be between -90 and 90, -90 is top of tire, 0 is middle, 90 is bottom).
-
-        end : float
-            End angle of extraction (must be greater than `start` and must be between -90 and 90).
-
-        tire_bounding_ellipses : Optional[tuple]
-            Outer and inner tire bounding ellipses.
-
-            If none, they will be auto-generated.
+        lineType: int
+            Type of line (cv2.FILLED, cv2.LINE_4, cv2.LINE8 or cv2.LINE_AA).
 
         Returns
         -------
         numpy.ndarray
-            BGR image with drawn ellipses defining the tire model used for tread extraction.
-
-            Red ellipse = main ellipse (vehicle's rim).
-
-            Yellow ellipses = bounding ellipses of tire (outer and inner sides of tire).
-
-            Green rectangle = area of tread extraction.
+            Original image with drawn TireModel.
 
         Raises
         ------
-        ValueError
-            When any of parameters are invalid (negative resolution, wrong degrees, invalid ellipses etc.).
+        RuntimeError
+            When TireModel is not initialized.
         """
 
-        if start < -90 or end > 90:
-            raise ValueError('Invalid start or end position, cannot extract tread out of view.')
-        if start >= end:
-            raise ValueError('Start angle has to be less than the end angle.')
-        if tire_width < 0:
-            raise ValueError('Tire width must be greater than 0.')
-        if tire_bounding_ellipses is not None:
-            if len(tire_bounding_ellipses) != 2:
-                raise ValueError('You must provide exactly 2 ellipses.')
-            if not isinstance(tire_bounding_ellipses[0], Ellipse) or not isinstance(tire_bounding_ellipses[1], Ellipse):
-                raise ValueError('One of the provided ellipses is not an instance of treadscan.Ellipse.')
+        if self.inner_ellipse is None or self.outer_ellipse is None:
+            raise RuntimeError('TireModel is not initialized.')
 
-        if tire_bounding_ellipses is None:
-            tire_bounding_ellipses = self.get_tire_bounding_ellipses(tire_width, tire_sidewall, outer_extend)
+        # Inner ellipse 'orientation' (start and end are points on ellipse - represented by degrees).
+        # https://docs.opencv.org/4.x/d6/d6e/group__imgproc__draw.html#ga28b2267d35786f5f890ca167236cbc69
+        # 'If startAngle is greater than endAngle, they are swapped.' - reason behind the weird values.
+        if self.outer_ellipse.cx < self.inner_ellipse.cx:
+            start = -90
+            end = 90
+        else:
+            start = 90
+            end = 270
 
-        outer, inner = tire_bounding_ellipses
-
-        if outer.cx > inner.cx:
-            raise ValueError('Ellipses are crossed, outer should be on the left side, inner on the right side.')
-
-        start_a = outer.point_on_ellipse(start)
-        start_b = inner.point_on_ellipse(start)
-        end_a = outer.point_on_ellipse(end)
-        end_b = inner.point_on_ellipse(end)
-
-        image = cv2.cvtColor(self.image, cv2.COLOR_GRAY2BGR)
-        yellow = (0, 255, 255)
-        green = (0, 255, 0)
-
-        # Draw horizontal lines, top and bottom of tread
-        cv2.line(image, (int(start_a[0]), int(start_a[1])), (int(start_b[0]), int(start_b[1])), thickness=5,
-                 color=green)
-        cv2.line(image, (int(end_a[0]), int(end_a[1])), (int(end_b[0]), int(end_b[1])), thickness=5, color=green)
-
-        # Draw bounding ellipses
-        cv2.ellipse(image, *outer.cv2_ellipse(), thickness=5, color=yellow)
-        cv2.ellipse(image, *inner.cv2_ellipse(-90, 90), thickness=5, color=yellow)
-        # Edges of tire tread
-        cv2.ellipse(image, *outer.cv2_ellipse(start, end), thickness=5, color=green)
-        cv2.ellipse(image, *inner.cv2_ellipse(start, end), thickness=5, color=green)
+        image = cv2.ellipse(image, *self.outer_ellipse.cv2_ellipse(), color=color, thickness=thickness,
+                            lineType=lineType)
+        image = cv2.ellipse(image, *self.inner_ellipse.cv2_ellipse(start, end), color=color, thickness=thickness,
+                            lineType=lineType)
 
         return image
 
-    def extract_tread(self, final_width: int = 0, tire_width: int = 0, start: float = -10, end: float = 80,
-                      tire_bounding_ellipses: Optional[tuple] = None, cores: int = 4) -> np.ndarray:
+    def bounding_box(self) -> ((int, int), (int, int)):
         """
-        Unwraps tire tread into a new image.
+        Create bounding box of tire model.
+
+        Returns
+        -------
+        ((int, int), (int, int))
+            Top left and bottom right points.
+
+        Raises
+        ------
+        RuntimeError
+            If TireModel is not initialized.
+        """
+
+        if self.outer_ellipse is None or self.inner_ellipse is None:
+            raise RuntimeError('TireModel is not initialized.')
+
+        # Find bounding box
+        if self.outer_ellipse.cx < self.inner_ellipse.cx:
+            left_bbox = self.outer_ellipse.bounding_box()
+            right_bbox = self.inner_ellipse.bounding_box()
+        else:
+            left_bbox = self.inner_ellipse.bounding_box()
+            right_bbox = self.outer_ellipse.bounding_box()
+
+        # Extend bounding box to entire tire
+        top_left = left_bbox[0]
+        bottom_right = right_bbox[1][0], left_bbox[1][1]
+
+        # Restrict points to within image
+        left = min(self.image_size[1] - 1, max(0, top_left[0]))
+        top = min(self.image_size[0], max(0, top_left[1]))
+        right = max(0, min(self.image_size[1] - 1, bottom_right[0]))
+        bottom = max(0, min(self.image_size[0] - 1, bottom_right[1]))
+
+        return (left, top), (right, bottom)
+
+    def unwrap(self, image: np.ndarray, start: int = -10, end: int = 80) -> np.ndarray:
+        """
+        Unwrap tire tread as a rectangle.
 
         Parameters
         ----------
-        final_width : int
-            Width of final image (unwrapped tread). This essentially scales the final image to desired width, height
-            stays proportional.
+        image : numpy.ndarray
+            Image from which to unwrap the tread from.
 
-            0 for automatic (same size as tire_width).
+        start : int
+            Beginning (top) of tire tread represented in degrees.
 
-        tire_width : int
-            Width of tire in original image (in pixels). Is only used when auto-generating tire bounding ellipses.
-
-            0 for automatic (overestimates on purpose to avoid missing tread).
-
-        start : float
-            Starting angle of extraction (must be between -90 and 90, -90 is top of tire, 0 is middle, 90 is bottom).
-
-        end : float
-            End angle of extraction (must be greater than `start` and must be between -90 and 90).
-
-        tire_bounding_ellipses : Optional[tuple]
-            Outer and inner tire bounding ellipses.
-
-            If none, they will be auto-generated.
-
-        cores : int
-            Number of child processes to spawn for parallel tread extraction.
-
-            Be warned that each spawned child process creates a copy of the original image, this can eat up a lot of
-            memory if hundreds are spawned. This doesn't happen when forking processes (copy-on-write), fork() is only
-            available on POSIX-compliant systems.
+        end : int
+            End (bottom) of tire tread represented in degrees.
 
         Returns
         -------
         numpy.ndarray
-            New image with extracted tread. If original image has 1 channel (grayscale), output of this function is
-            also a grayscale image. If original has more channels (BGR, RGB, etc.), output is also in the same
-            colorspace (BGR, RGB, etc.).
+            Image containing unwrapped tread.
 
         Raises
         ------
-        ValueError
-            When any of parameters are invalid (negative resolution, wrong degrees, invalid ellipses etc.).
+        RuntimeError
+            When TireModel is not initialized or has 0 width (or height).
         """
 
+        if self.outer_ellipse is None or self.inner_ellipse is None:
+            raise RuntimeError('TireModel is not initialized.')
+        if self.tire_width == 0:
+            raise RuntimeError('TireModel is 0 pixels wide.')
+
         if start < -90 or end > 90:
-            raise ValueError('Invalid start or end position, cannot extract tread out of view.')
+            raise ValueError('Invalid start or end position, cannot unwrap tread out of view.')
         if start >= end:
             raise ValueError('Start angle has to be less than the end angle.')
-        if final_width < 0:
-            raise ValueError('Final width must be greater than 0.')
-        if tire_width < 0:
-            raise ValueError('Tire width must be greater than 0.')
-        if cores < 1:
-            raise ValueError('Number of cores must be greater or equal to 1.')
 
-        if tire_bounding_ellipses is None:
-            outer_ellipse, inner_ellipse = self.get_tire_bounding_ellipses(tire_width=self.main_ellipse.height // 2)
-        else:
-            if len(tire_bounding_ellipses) != 2:
-                raise ValueError('Invalid amount of ellipses provided. Must be 2 (outer and inner).')
-            outer_ellipse, inner_ellipse = tire_bounding_ellipses
-            if type(outer_ellipse) is not Ellipse or type(inner_ellipse) is not Ellipse:
-                raise ValueError('Ellipses are not an instance of treadscan.Ellipse.')
+        # Determining tread width
+        point_a = self.outer_ellipse.point_on_ellipse(deg=0)
+        point_b = self.inner_ellipse.point_on_ellipse(deg=0)
+        tread_width = int(np.ceil(euclidean_dist(point_a, point_b)))
 
-        # Determining horizontal step size
-        point_a = outer_ellipse.point_on_ellipse(deg=0)
-        point_b = inner_ellipse.point_on_ellipse(deg=0)
-
-        # Determine tread width if not set
-        tire_width_in_image = euclidean_dist(point_a, point_b)
-        tread_width = final_width
         if tread_width == 0:
-            tread_width = int(tire_width_in_image)
+            raise RuntimeError('Tread width equals 0, cannot proceed.')
 
-        # Determine horizontal step size
-        step_size = tire_width_in_image / tread_width
-
-        # Determining angular step size (on ellipse) in such a way, that the biggest step (at 0 degrees) is the same
-        # length as the horizontal steps
-        degrees_step_size = np.degrees(np.arcsin(2 * step_size / outer_ellipse.height))
+        # Determining tread height and angular step size (on ellipse) in such a way, that the biggest step
+        # (at 0 degrees) is the same length as the horizontal step
+        horizontal_step_size = 1
+        degrees_step_size = np.degrees(np.arcsin(2 * horizontal_step_size / self.outer_ellipse.height))
         total_degrees = abs(start - end)
         tread_height = int(np.ceil(total_degrees / degrees_step_size))
 
-        # Parallel tread unwrapping, each core (process) is assigned one part of tire tread, which is split horizontally
-        part = int(np.floor(tread_height / cores))
-        # Each part is the same height, except possibly the last one, which can be taller by upto (cores - 1) pixels
-        remainder = int(tread_height / cores % 1 * cores)
-        # This list contains first and last Y coordinates, for example 40 pixels tall tread, then [0, 10, 20, 30, 40]
-        parts = [part * i for i in range(0, cores + 1)]
-        # Don't forget the remainder
-        parts[-1] = parts[-1] + remainder
+        if tread_height == 0:
+            raise RuntimeError('Tread height equals 0, cannot proceed.')
 
-        # Sanity check
-        if len(parts) > 1 and parts[1] - parts[0] < 1:
-            raise ValueError('Tread split into too many parts (reduce number of cores).')
+        # Empty image (tread)
+        shape = (tread_height, tread_width)
+        if len(image.shape) == 3:
+            shape = (tread_height, tread_width, image.shape[2])
+        tread = np.zeros(shape=shape, dtype=np.uint8)
 
-        def collect_args(index: int) -> (int, np.ndarray):
-            """
-            Collects required parameters for one part of tread.
+        left_ellipse = self.outer_ellipse
+        right_ellipse = self.inner_ellipse
+        if left_ellipse.cx > right_ellipse.cx:
+            left_ellipse = self.inner_ellipse
+            right_ellipse = self.outer_ellipse
+            start = 180 - start
+            end = 180 - end
 
-            Returns
-            -------
-            (int, numpy.ndarray)
-                Tuple of index of part and degree range.
-            """
+        y = 0
+        for deg in np.linspace(start, end, tread_height, endpoint=False):
+            # Line is created between A and B
+            point_a = left_ellipse.point_on_ellipse(deg=deg)
+            point_b = right_ellipse.point_on_ellipse(deg=deg)
+            x_step = (point_b[0] - point_a[0]) / tread_width
+            y_step = (point_b[1] - point_a[1]) / tread_width
+            for x in range(tread_width):
+                # Step over the created line from left to right, extract pixels
+                point = point_a[0] + x * x_step, point_a[1] + x * y_step
+                pixel = cv2.getRectSubPix(image, (1, 1), point)[0, 0]
+                tread[y, x] = pixel
+            y += 1
 
-            range_start = start + parts[index] * degrees_step_size
-            range_stop = start + parts[index + 1] * degrees_step_size
-            height = parts[index + 1] - parts[index]
-            # Exclude endpoint for same behavior as np.arange, np.arange can be unstable, therefore using np.linspace
-            linspace = np.linspace(range_start, range_stop, height, endpoint=False)
-
-            return index, linspace
-
-        # Write variables, which are shared across all child processes, into shared memory (to avoid copying when
-        # using fork() to create processes)
-        global global_image
-        global global_outer_ellipse
-        global global_inner_ellipse
-        global global_tread_width
-        global_image = self.image
-        global_outer_ellipse = outer_ellipse
-        global_inner_ellipse = inner_ellipse
-        global_tread_width = tread_width
-
-        # Unwrap tread in parallel
-        pool = multiprocessing.Pool(processes=cores)
-        # List of tuples, each process returns index of part and part itself (image)
-        result = pool.starmap(tire_tread_part, [collect_args(i) for i in range(0, cores)])
-
-        # Sort and stitch parts together (first element in tuple is index, second the tread part image)
-        sorted(result, key=lambda x: x[0])
-        sorted_parts = [r[1] for r in result]
-        tread = np.concatenate(sorted_parts)
-
-        # Clean up global variables to avoid any misuse
-        global_image = None
-        global_outer_ellipse = None
-        global_inner_ellipse = None
-        global_tread_width = None
-
-        if self.flipped:
-            tread = cv2.flip(tread, 1)
         return tread
-
-
-global_image = None
-global_outer_ellipse = None
-global_inner_ellipse = None
-global_tread_width = None
-
-
-def tire_tread_part(index: int, linspace: np.ndarray) -> (int, np.ndarray):
-    """
-    Unwraps part of tire tread.
-
-    Parameters
-    ----------
-    index : int
-        Index of part (to identify where part belongs).
-
-    linspace : numpy.ndarray
-        Range of degrees on bounding (outer and inner) ellipses, which is being unwrapped.
-
-    Returns
-    -------
-    (int, numpy.ndarray)
-        Index of tread part and unwrapped tread as image.
-
-    Raises
-    ------
-    RuntimeError
-        When variables in shared memory haven't been set.
-
-    Notes
-    -----
-    Uses variables in shared memory. Without setting these first, the method does nothing. Shared memory is used to gain
-    significant performance advantages over copying the variables for each process, since this method is used for
-    parallel extraction of tire tread. Copying the original image (and other arguments) is slow, especially if hundreds
-    of child processes are spawned, which is admittedly an edge case, but consider a super huge mega large image,
-    copying it many times might even be impossible (not enough memory) so the extraction would need to be run on
-    a single core only to avoid OOM, in this case, the ability to use possibly hundreds of cores to speed up the
-    extraction offers great performance gain for almost no downsides. (The real downside is spaghetti-like code using
-    global variables and this method being outside the Extractor class, which is again, to avoid unnecessary copying).
-
-    This performance gain exists only on POSIX-compliant systems, because the fork() child "points" to the same memory
-    as the parent and uses copy-on-write strategy. Since this method only reads from the original image and doesn't
-    modify it, new copies don't need to be made, saving time and memory.
-    That doesn't happen using the win32 API, which creates an entirely new process and all the data needs to be copied
-    because of that (https://stackoverflow.com/a/17786444).
-    """
-
-    if global_image is None or global_outer_ellipse is None or global_inner_ellipse is None \
-            or global_tread_width is None:
-        raise RuntimeError('Global variables have not been set, cannot proceed.')
-
-    # Create empty image
-    tread_height = len(linspace)
-    if len(global_image.shape) > 2:
-        # Color
-        tread_part = np.zeros(shape=(tread_height, global_tread_width, global_image.shape[2]), dtype=np.uint8)
-    else:
-        # Grayscale
-        tread_part = np.zeros(shape=(tread_height, global_tread_width), dtype=np.uint8)
-
-    y = 0
-    for deg in linspace:
-        # Point A lies on outer ellipse, point B on inner ellipse
-        # Line is created between A and B
-        point_a = global_outer_ellipse.point_on_ellipse(deg=deg)
-        point_b = global_inner_ellipse.point_on_ellipse(deg=deg)
-        x_step = (point_b[0] - point_a[0]) / global_tread_width
-        y_step = (point_b[1] - point_a[1]) / global_tread_width
-        for x in range(global_tread_width):
-            # Step over the created line from left to right, extract pixels
-            point = point_a[0] + x * x_step, point_a[1] + x * y_step
-            pixel = cv2.getRectSubPix(global_image, (1, 1), point)[0, 0]
-            tread_part[y, x] = pixel
-        y += 1
-
-    return index, tread_part
