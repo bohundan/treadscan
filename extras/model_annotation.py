@@ -8,10 +8,9 @@ from pathlib import Path
 
 import cv2
 from annotator import Annotator
-from treadscan.extractor import CameraPosition
 
 
-def main(filename: str, max_width: int, max_height: int, flipped: bool, rescale: float):
+def main(filename: str, max_width: int, max_height: int, rescale: float):
     """
     Main function when script is started as a shell program. If annotation is submitted (enter), the keypoints are saved
     as json file.
@@ -26,9 +25,6 @@ def main(filename: str, max_width: int, max_height: int, flipped: bool, rescale:
 
     max_height : int
         Max height of annotation window.
-
-    flipped : bool
-        If true, image will be flipped horizontally.
 
     rescale : float
         If json file provided as filename and rescale is not 1, keypoints in json file will be rescaled.
@@ -57,16 +53,11 @@ def main(filename: str, max_width: int, max_height: int, flipped: bool, rescale:
         for filename in filenames:
             # Annotate images
             original_image = cv2.imread(filename, cv2.IMREAD_GRAYSCALE)
-            annotator = Annotator(original_image, max_width, max_height, flipped)
+            annotator = Annotator(original_image, max_width, max_height)
             result = annotator.annotate_keypoints()
 
             # If user submitted annotation
             if result:
-                if flipped:
-                    image = cv2.flip(original_image, 1)
-                else:
-                    image = original_image
-
                 images_folder = 'images_'
                 annotations_folder = 'annotations_'
 
@@ -75,7 +66,7 @@ def main(filename: str, max_width: int, max_height: int, flipped: bool, rescale:
 
                 stem = Path(filename).stem
                 # Write image to images folder
-                cv2.imwrite(f'{images_folder}/{stem}.jpg', image)
+                cv2.imwrite(f'{images_folder}/{stem}.jpg', original_image)
                 # Write annotation to annotations folder
                 with open(f'{annotations_folder}/{stem}.json', 'w') as json_file:
                     json_file.write(result)
@@ -138,11 +129,9 @@ arg_parser.add_argument('--width', dest='width', required=False, help='maximum w
                         metavar='NUMBER', type=int, default=1800)
 arg_parser.add_argument('--height', dest='height', required=False, help='maximum height of annotation window',
                         metavar='NUMBER', type=int, default=800)
-arg_parser.add_argument('--flipped', dest='flipped', required=False, help='image will be flipped horizontally',
-                        action='store_true')
 arg_parser.add_argument('--rescale', dest='rescale', required=False, help='rescale keypoints inside file by factor',
                         metavar='NUMBER', type=float, default=1.0)
 args = arg_parser.parse_args()
 
 if __name__ == '__main__':
-    main(args.filename, args.width, args.height, args.flipped, args.rescale)
+    main(args.filename, args.width, args.height, args.rescale)
