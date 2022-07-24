@@ -35,8 +35,17 @@ class Ellipse:
     get_center()
         Returns center coordinates as tuple.
 
-    point_on_ellipse(degrees)
+    point_on_ellipse(deg: float)
         Returns point on ellipse perimeter.
+
+    is_point_inside(point: (int, int))
+        Checks whether point lies inside or outside the ellipse.
+
+    distance_between_point(point: (int, int))
+        Calculates the shortest distance between ellipse and point.
+
+    horizontal_distance_between_point(point: (int, int))
+        Calculates the length of a line drawn horizontally (relative to major axis) from the ellipse to the point.
 
     cv2_ellipse(start: float, end: float)
         Returns self as list, which when unpacked (star operator) is compatible with cv2.ellipse() drawing operation.
@@ -44,6 +53,9 @@ class Ellipse:
     horizontal_distance_between_point(x: int, y: int)
         Returns the length of a horizontal line drawn from point and intersecting with the ellipse. Only implemented for
         non-rotated ellipse.
+
+    fit_to_intersect(point: (int, int))
+        Scales ellipse to intersect given point.
 
     bounding_box():
         Returns top left and bottom right points of ellipse's bounding box.
@@ -134,47 +146,105 @@ class Ellipse:
 
         return x, y
 
-    def horizontal_distance_between_point(self, x: int, y: int) -> int:
+    def is_point_inside(self, point: (int, int)) -> bool:
         """
-        Approximate angle which gives the closest point on the right side of ellipse to provided point.
-        Only works for ellipses which AREN'T ROTATED.
+        Check if point is inside or outside of ellipse.
 
         Parameters
         ----------
-        x : int
-            X coordinate of point.
-        y : int
-            Y coordinate of point.
+        point: (int, int)
+            X and Y coordinates.
+
+        Returns
+        -------
+        bool
+            True if inside or on ellipse, False if outside.
+        """
+
+        # https://stackoverflow.com/a/16814494
+        a = self.width / 2
+        b = self.height / 2
+
+        x = (point[0] - self.cx)
+        y = (point[1] - self.cy)
+
+        cos = np.cos(np.radians(self.angle))
+        sin = np.sin(np.radians(self.angle))
+
+        p = ((cos * x + sin * y)**2 / a**2) + ((sin * x - cos * y)**2 / b**2)
+
+        return p <= 1
+
+    def distance_between_point(self, point: (int, int)) -> float:
+        """
+        Calculate distance between point and ellipse.
+
+        Parameters
+        ----------
+        point : (int, int)
+            X and Y coordinates.
+
+        Returns
+        -------
+        float
+            Distance between point and ellipse.
+        """
+
+        # Find angle of line drawn from center of the ellipse to the point
+        dx = point[0] - self.cx
+        dy = point[1] - self.cy
+        if dx == 0:
+            theta = np.pi / 2
+            if dy < 0:
+                theta *= -1
+        else:
+            theta = np.arctan(dy / dx)
+        if dx < 0:
+            theta = np.pi + theta
+
+        # Now find point which lies on the ellipse at this angle
+        closest = self.point_on_ellipse(np.degrees(theta))
+
+        # Return distance between original point and the closest point on ellipse
+        return euclidean_dist(point, closest)
+
+    def horizontal_distance_between_point(self, point: (int, int)) -> int:
+        """
+        Approximate angle which gives the closest point on the right side of ellipse to provided point if you were
+        to draw a horizontal line.
+
+        Parameters
+        ----------
+        point : (int, int)
+            X and Y coordinates.
 
         Returns
         -------
         int
-            Length of horizontal line drawn from (x, y) and intersecting ellipse.
-
-        Raises
-        ------
-        RuntimeError
-            When ran for a rotated ellipse (ellipse.angle != 0) or when ellipse has 0 width.
+            Length of horizontal (relative to ellipse) line drawn from (x, y) and intersecting ellipse.
         """
 
-        if self.angle != 0:
-            raise RuntimeError('This method does not work correctly with a rotated ellipse.')
-        if self.width == 0:
-            raise RuntimeError('Ellipse has 0 width.')
+        # "Unrotate" point relative to ellipse, then do calculations on just the horizontal axis (much simpler)
+        x, y = rotate_point(point, -self.angle, self.get_center())
 
+        # Ellipse parameters (no rotation angle, simpler calculation)
         a = self.width / 2
         b = self.height / 2
 
-        # Move Y to count for ellipse being off center (not at 0,0)
+        # Move Y to account for ellipse being off center (not at 0, 0)
         y -= self.cy
         # Make sure Y is on ellipse
-        y = np.clip(y, -b + 2, b - 2)  # Magic two to make really sure
+        y = np.clip(y, -b, b)
 
-        # From the equation for ellipse x^2/a^2 + y^2/b^2 = 1, x = a * sqrt(b**2 - y**2) / b
-        # Avoid division by zero (and square root of negative number)
-        if b <= abs(y):
-            b = y + 5  # Magic five
-        x_on_ellipse = a * np.sqrt(b**2 - y**2) / b
+        if b == 0 or b**2 < y**2:
+            # Avoid division by 0 or complex numbers
+            x_on_ellipse = 0
+        else:
+            # From the equation for ellipse x^2/a^2 + y^2/b^2 = 1, x = a * sqrt(b^2 - y^2) / b
+            x_on_ellipse = a * np.sqrt(b**2 - y**2) / b
+            # Sanity check
+            if np.isnan(x_on_ellipse):
+                x_on_ellipse = 0
 
         # Correct side
         if x < self.cx:
@@ -183,6 +253,38 @@ class Ellipse:
         dist = abs(int(self.cx + x_on_ellipse - x))
 
         return dist
+
+    def fit_to_intersect(self, point: (int, int)):
+        """
+        Extend ellipse to intersect given point.
+
+        Parameters
+        ----------
+        point : (int, int)
+            X and Y coordinates.
+        """
+
+        # "Unrotate" the point for a simpler solution
+        x, y = rotate_point(point, -self.angle, self.get_center())
+
+        # Move to origin (0, 0)
+        x -= self.cx
+        y -= self.cy
+
+        a = self.width / 2
+        b = self.height / 2
+
+        # Can't extend an ellipse which is really just a line
+        if a == 0 or b == 0:
+            return
+
+        # Ellipse equation: x**2 / a**2 + y**2 / b**2 == 1
+        # We want to adjust 'a' and 'b' by an unknown ratio
+        # 'x' and 'y' is the point we want to intersect
+        z = np.sqrt(a**2 * y**2 + b**2 * x**2) / (a * b)
+
+        self.width = int(self.width * z)
+        self.height = int(self.height * z)
 
     def bounding_box(self) -> list:
         """
@@ -197,12 +299,12 @@ class Ellipse:
 
         theta = np.radians(self.angle)
 
-        a = self.height / 2
-        b = self.width / 2
+        a = self.width / 2
+        b = self.height / 2
 
         # Ellipse limits on given axis
-        y = np.sqrt(a**2 * np.cos(theta)**2 + b**2 * np.sin(theta)**2)
-        x = np.sqrt(a**2 * np.sin(theta)**2 + b**2 * np.cos(theta)**2)
+        x = np.sqrt(a**2 * np.cos(theta)**2 + b**2 * np.sin(theta)**2)
+        y = np.sqrt(a**2 * np.sin(theta)**2 + b**2 * np.cos(theta)**2)
 
         top_left = self.cx - int(x), self.cy - int(y)
         bottom_right = self.cx + int(x), self.cy + int(y)
@@ -483,3 +585,131 @@ def image_histogram(image: np.ndarray) -> np.ndarray:
     cv2.normalize(histogram, histogram, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
 
     return histogram
+
+
+def perspective_transform_y_axis(angle: float, point: (int, int), image_size: (int, int)) -> (int, int):
+    r"""
+    Perspective rotation around Y axis (center of image), takes original X and Y coordinates, returns transformed.
+
+    Parameters
+    ----------
+    angle : float
+        Angle of rotation in degrees (rotation around Y axis).
+
+    point : (int, int)
+        X and Y coordinates.
+
+    image_size : (int, int)
+        Height and width of image.
+
+    Returns
+    -------
+    (int, int)
+        Tuple of transformed X and Y coordinates (position after perspective transformation).
+
+    Notes
+    -----
+    :math:`A1` is a projection matrix from 2D to 3D, :math:`RY` is a rotation matrix (around the Y axis),
+    :math:`T` is the translation matrix and :math:`A2` is a projection matrix back from 3D to 2D. [1]_
+
+    .. math::
+
+        A1 = \begin{pmatrix}
+                1 & 0 & -\frac{w}{2} \\
+                0 & 1 & -\frac{h}{2} \\
+                0 & 0 &       1      \\
+                0 & 0 &       1
+             \end{pmatrix}
+
+        RY = \begin{pmatrix}
+                \cos(\varphi) & 0 & -\sin(\varphi) & 0 \\
+                    0      & 1 &      0      & 0 \\
+                \sin(\varphi) & 0 & \cos(\varphi)  & 0 \\
+                    0      & 0 &      0      & 1
+             \end{pmatrix}
+
+        T = \begin{pmatrix}
+                1 & 0 & 0 \\
+                0 & 1 & 0 \\
+                0 & 0 & f \\
+                0 & 0 & 1
+             \end{pmatrix}
+
+        A2 = \begin{pmatrix}
+                f & 0 & \frac{w}{2} & 0 \\
+                0 & f & \frac{h}{2} & 0 \\
+                0 & 0 &      1      & 0
+             \end{pmatrix}
+
+    :math:`f` is calculated as :math:`\sqrt{\texttt{width}^2 + \texttt{height}^2}`.
+
+    :math:`\varphi` is the angle of rotation around the Y axis.
+
+    The final transformation matrix is then given by
+
+    .. math:: M = \Big( A2 \cdot \big( T \cdot ( R \cdot A1 ) \big) \Big).
+
+    And the transformation of the points :math:`x` and :math:`y` is [2]_
+
+    .. math::
+
+        \texttt{dst}(x, y) =
+        \left(
+            \frac{M_{11}x + M_{12}y + M_{13}}{M_{31}x + M_{32}y + M_{33}},
+            \frac{M_{21}x + M_{22}y + M_{23}}{M_{31}x + M_{32}y + M_{33}}
+        \right).
+
+    .. [1] M. Jepson, https://jepsonsblog.blogspot.com/2012/11/rotation-in-3d-using-opencvs.html
+       28 November 2012
+    .. [2] OpenCV documentation,
+       https://docs.opencv.org/4.x/da/d54/group__imgproc__transform.html#gaf73673a7e8e18ec6963e3774e6a94b87
+       3 February 2022
+    """
+
+    h, w = image_size
+    # Focal point
+    f = np.sqrt(w**2 + h**2)
+    phi = np.radians(angle)
+
+    # Transformation matrix, explained in notes section
+    m_11 = f * np.cos(phi) + (w / 2) * np.sin(phi)
+    m_12 = 0
+    m_13 = f * ((-w / 2) * np.cos(phi) - np.sin(phi)) + (w / 2) * ((-w / 2) * np.sin(phi) + np.cos(phi) + f)
+    m_21 = (h / 2) * np.sin(phi)
+    m_22 = f
+    m_23 = f * (-h / 2) + (h / 2) * ((-w / 2) * np.sin(phi) + np.cos(phi) + f)
+    m_31 = np.sin(phi)
+    m_32 = 0
+    m_33 = (-w / 2) * np.sin(phi) + np.cos(phi) + f
+
+    x, y = point
+    # Transformed coordinates
+    x_ = (m_11 * x + m_12 * y + m_13) / (m_31 * x + m_32 * y + m_33)
+    y_ = (m_21 * x + m_22 * y + m_23) / (m_31 * x + m_32 * y + m_33)
+
+    return x_, y_
+
+
+def equalize_grayscale(image: np.ndarray, clip_limit: float = 8.0, tile_grid_size: Union[int, tuple] = 4) -> np.ndarray:
+    """
+    Contrast limited adaptive histogram equalization (CLAHE).
+
+    Parameters
+    ----------
+    image: numpy.ndarray
+        Grayscale image.
+
+    clip_limit: float
+        Threshold for contrast limiting.
+
+    tile_grid_size: Union[int, tuple]
+        Size of grid for histogram equalization.
+    """
+
+    if isinstance(tile_grid_size, int):
+        tile_grid_size = (tile_grid_size, tile_grid_size)
+
+    clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
+    equalized = clahe.apply(image)
+
+    return equalized
