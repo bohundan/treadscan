@@ -10,7 +10,7 @@ Treadscan documentation
 
 Required Python version: ``python3.8`` or higher.
 
-Required packages: ``numpy``, ``opencv-python``, ``opencv-contrib-python``, ``improutils``, ``torch`` and ``torchvision``.
+Required packages: ``numpy``, ``opencv-python``, ``opencv-contrib-python``, ``improutils``.
 
 To build this documentation, you need ``Sphinx``, ``numpydoc`` and ``sphinx-rtd-theme``.
 
@@ -25,13 +25,13 @@ To build this documentation, you need ``Sphinx``, ``numpydoc`` and ``sphinx-rtd-
 **Treadscan classes:**
 
 .. autosummary::
-   treadscan.detector.Detector
    treadscan.detector.InputType
    treadscan.detector.FrameExtractor
+   treadscan.detector.BackgroundSubtractorSimple
+   treadscan.detector.Detector
+   treadscan.segmentor.SegmentorRCNN
    treadscan.segmentor.Segmentor
-   treadscan.segmentor.RCNNSegmentor
-   treadscan.extractor.Extractor
-   treadscan.extractor.CameraPosition
+   treadscan.extractor.TireModel
    treadscan.utilities.Ellipse
 
 .. toctree::

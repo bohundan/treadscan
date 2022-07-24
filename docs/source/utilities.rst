@@ -48,3 +48,16 @@ image_histogram()
 -----------------
 
 .. autofunction:: treadscan.utilities.image_histogram
+
+
+perspective_transform_y_axis()
+------------------------------
+
+.. autofunction:: treadscan.utilities.perspective_transform_y_axis
+
+
+equalize_grayscale()
+--------------------
+
+.. autofunction:: treadscan.utilities.equalize_grayscale
+

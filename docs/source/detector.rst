@@ -3,17 +3,6 @@ treadscan.detector
 
 .. image:: _static/detector.png
 
-Detector
---------
-
-.. autoclass:: treadscan.detector.Detector
-   :members:
-
-BackgroundSubtractorSimple
-------------------------
-
-.. autoclass:: treadscan.detector.BackgroundSubtractorSimple
-   :members:
 
 FrameExtractor
 --------------
@@ -25,4 +14,16 @@ InputType
 ---------
 
 .. autoclass:: treadscan.detector.InputType
+   :members:
+
+BackgroundSubtractorSimple
+--------------------------
+
+.. autoclass:: treadscan.detector.BackgroundSubtractorSimple
+   :members:
+
+Detector
+--------
+
+.. autoclass:: treadscan.detector.Detector
    :members:

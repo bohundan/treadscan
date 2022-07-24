@@ -4,7 +4,7 @@ treadscan.segmentor
 SegmentorRCNN
 -------------
 
-.. image:: _static/test_detection.png
+.. image:: _static/test_detection.jpg
 
 .. autoclass:: treadscan.segmentor.SegmentorRCNN
    :members:

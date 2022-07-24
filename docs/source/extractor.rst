@@ -3,17 +3,8 @@ treadscan.extractor
 
 .. image:: _static/extractor.png
 
-Extractor
+TireModel
 ---------
 
-.. autoclass:: treadscan.extractor.Extractor
-   :members:
-
-.. autofunction:: treadscan.extractor.tire_tread_part()
-
-
-CameraPosition
---------------
-
-.. autoclass:: treadscan.extractor.CameraPosition
+.. autoclass:: treadscan.extractor.TireModel
    :members:
