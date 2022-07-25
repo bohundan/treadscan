@@ -60,16 +60,14 @@ class Annotator:
             Maximum height of annotation window (without preview).
         """
 
+        self.image = image.copy()
         self.scale = min(max_width / image.shape[1], max_height / image.shape[0])
         self.scale = min(self.scale, 1)
+        self.image = scale_image(self.image, self.scale)
+        self._original_image = self.image.copy()
 
-        self.image = scale_image(image, self.scale)
-        # Convert grayscale to BGR
         if len(self.image.shape) == 2:
             self.image = cv2.cvtColor(self.image, cv2.COLOR_GRAY2BGR)
-        else:
-            self.image = image.copy()
-        self._original_image = self.image.copy()
 
         self.tire_model = TireModel((self.image.shape[0], self.image.shape[1]))
 
@@ -85,8 +83,7 @@ class Annotator:
             ord('i'): None   # End angle
         }
 
-        # Hidden attributes for less wonky behaviour of some annotation points to stop movement of multiple points as a
-        # reaction to one point changing
+        # Hidden attributes (used to constrain TOP and BOTTOM keypoints to avoid inverting them)
         self.__prev_top = (0, 0)
         self.__prev_bottom = (0, 0)
 
@@ -297,10 +294,28 @@ class Annotator:
             keypoints.append([top, bottom, right, sidewall, width])
             bounding_boxes.append([*top_left, *bottom_right])
 
-        tread = None
+        show_preview = True
         while True:
             # Start with clean image
             image = self.image.copy()
+
+            # Draw points
+            success = self.draw(image)
+
+            if success and show_preview:
+                try:
+                    tread = self.tire_model.unwrap(self._original_image)
+
+                    # Improve preview by equalizing histogram
+                    if len(tread.shape) == 3:
+                        tread = cv2.cvtColor(tread, cv2.COLOR_BGR2GRAY)
+                    tread = equalize_grayscale(tread)
+                    tread = cv2.cvtColor(tread, cv2.COLOR_GRAY2BGR)
+                except RuntimeError:
+                    tread = None
+            else:
+                tread = None
+
             # If tread preview exists, show it in upper right corner
             if tread is not None:
                 h1, w1 = image.shape[0], image.shape[1]
@@ -314,14 +329,11 @@ class Annotator:
 
                 image[0:h2, w1 - w2:w1, :] = tread[0:h2, 0:w2, :]
 
-            # Draw points
-            success = self.draw(image)
-
             # Wait for user input
             cv2.imshow('Image', image)
             cv2.namedWindow('Image', cv2.WINDOW_NORMAL)
             cv2.setMouseCallback('Image', mouse_callback)
-            key = cv2.waitKey(30)
+            key = cv2.waitKey(100)
 
             # If user closed window or pressed escape
             if cv2.getWindowProperty('Image', cv2.WND_PROP_VISIBLE) < 1 or key == 27:
@@ -336,21 +348,11 @@ class Annotator:
 
             # Space to show tread preview
             elif key == 32:
-                if success:
-                    try:
-                        tread = self.tire_model.unwrap(self._original_image)
-
-                        # Improve preview by equalizing histogram
-                        if len(tread.shape) == 3:
-                            tread = cv2.cvtColor(tread, cv2.COLOR_BGR2GRAY)
-                        tread = equalize_grayscale(tread)
-                        tread = cv2.cvtColor(tread, cv2.COLOR_GRAY2BGR)
-                    except RuntimeError as e:
-                        print(f'Created tire model is not possible. "{e}"')
+                show_preview = True
 
             # Backspace to hide preview
-            elif key == 8 and tread is not None:
-                tread = None
+            elif key == 8:
+                show_preview = False
 
             # An annotating key was pressed
             elif key != -1 and key in self.points.keys():
@@ -359,7 +361,8 @@ class Annotator:
             # N to save keypoints
             elif key == ord('n') and success:
                 save_keypoints()
-                tread = None
+                # Reset
+                show_preview = True
 
         cv2.destroyAllWindows()
 
