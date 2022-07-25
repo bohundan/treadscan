@@ -8,7 +8,10 @@ the vehicle's rim, tire sidewall and width is then approximated from the rim dia
 
 from typing import Union
 
+import numpy as np
+
 from .utilities import *
+from .cwrap import unwrap, unwrap_multichannel
 
 
 class TireModel:
@@ -384,8 +387,8 @@ class TireModel:
         point_b = self.inner_ellipse.point_on_ellipse(deg=0)
         tread_width = int(np.ceil(euclidean_dist(point_a, point_b)))
 
-        if tread_width == 0:
-            raise RuntimeError('Tread width equals 0, cannot proceed.')
+        if tread_width < 2:
+            raise RuntimeError('Tread width es less than 2 pixels.')
 
         # Determining tread height and angular step size (on ellipse) in such a way, that the biggest step
         # (at 0 degrees) is the same length as the horizontal step
@@ -394,14 +397,12 @@ class TireModel:
         total_degrees = abs(start - end)
         tread_height = int(np.ceil(total_degrees / degrees_step_size))
 
-        if tread_height == 0:
-            raise RuntimeError('Tread height equals 0, cannot proceed.')
+        if tread_height < 2:
+            raise RuntimeError('Tread height is less than 2 pixels.')
 
-        # Empty image (tread)
-        shape = (tread_height, tread_width)
-        if len(image.shape) == 3:
-            shape = (tread_height, tread_width, image.shape[2])
-        tread = np.zeros(shape=shape, dtype=np.uint8)
+        # Constrain max width and height (avoids infinitely large dimensions that occur is extreme cases)
+        tread_width = min(tread_width, self.image_size[1] * 2)
+        tread_height = min(tread_height, self.image_size[0] * 2)
 
         left_ellipse = self.outer_ellipse
         right_ellipse = self.inner_ellipse
@@ -411,18 +412,37 @@ class TireModel:
             start = 180 - start
             end = 180 - end
 
-        y = 0
-        for deg in np.linspace(start, end, tread_height, endpoint=False):
-            # Line is created between A and B
-            point_a = left_ellipse.point_on_ellipse(deg=deg)
-            point_b = right_ellipse.point_on_ellipse(deg=deg)
-            x_step = (point_b[0] - point_a[0]) / tread_width
-            y_step = (point_b[1] - point_a[1]) / tread_width
-            for x in range(tread_width):
-                # Step over the created line from left to right, extract pixels
-                point = point_a[0] + x * x_step, point_a[1] + x * y_step
-                pixel = cv2.getRectSubPix(image, (1, 1), point)[0, 0]
-                tread[y, x] = pixel
-            y += 1
+        # Color image
+        if len(image.shape) == 3:
+            # It's faster this way, trust me (about 60% faster than interacting with Python objects in Cython)
+            tread = np.zeros(shape=(tread_height, tread_width, image.shape[2]), dtype=np.uint8, order='C')
+            tread = unwrap_multichannel(np.ascontiguousarray(image), image.shape[0], image.shape[1], image.shape[2],
+                                        tread, tread_height, tread_width, left_ellipse.cx, left_ellipse.cy,
+                                        left_ellipse.width / 2, left_ellipse.height / 2, left_ellipse.angle,
+                                        right_ellipse.cx, right_ellipse.cy, right_ellipse.width / 2,
+                                        right_ellipse.height / 2, right_ellipse.angle, start, end)
+        # Grayscale image
+        else:
+            tread = np.zeros(shape=(tread_height, tread_width), dtype=np.uint8, order='C')
+            tread = unwrap(np.ascontiguousarray(image), image.shape[0], image.shape[1], tread, tread_height,
+                           tread_width, left_ellipse.cx, left_ellipse.cy, left_ellipse.width / 2,
+                           left_ellipse.height / 2, left_ellipse.angle, right_ellipse.cx, right_ellipse.cy,
+                           right_ellipse.width / 2, right_ellipse.height / 2, right_ellipse.angle, start, end)
 
-        return tread
+        # Original function in Python that unwraps treads
+        # 600 times slower than Cython implementation
+        # y = 0
+        # for deg in np.linspace(start, end, tread_height, endpoint=False):
+        #     # Line is created between A and B
+        #     point_a = left_ellipse.point_on_ellipse(deg=deg)
+        #     point_b = right_ellipse.point_on_ellipse(deg=deg)
+        #     x_step = (point_b[0] - point_a[0]) / tread_width
+        #     y_step = (point_b[1] - point_a[1]) / tread_width
+        #     for x in range(tread_width):
+        #         # Step over the created line from left to right, extract pixels
+        #         point = point_a[0] + x * x_step, point_a[1] + x * y_step
+        #         pixel = cv2.getRectSubPix(image, (1, 1), point)[0, 0]
+        #         tread[y, x] = pixel
+        #     y += 1
+
+        return np.asarray(tread)
