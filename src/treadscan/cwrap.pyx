@@ -9,29 +9,22 @@ from libc.math cimport sin, cos, floor
 @cython.cdivision(True)
 @cython.initializedcheck(False)
 cdef unsigned char getRectSubPix(const unsigned char[:, ::1] image, const unsigned int h, const unsigned int w,
-                                 const float x, const float y) nogil:
+                                 float x, float y) nogil:
+    # Clipping
+    if x < 0:
+        x = 0
+    if x >= w - 1:
+        # Go further inward the image to extend the border (doesn't make sense, but it works)
+        x = <float> w - 1.0009765625
+    if y < 0:
+        y = 0
+    if y >= h - 1:
+        y = <float> h - 1.0009765625
+
     cdef int x0 = <int> floor(x)
     cdef int x1 = x0 + 1
     cdef int y0 = <int> floor(y)
     cdef int y1 = y0 + 1
-
-    # Clipping
-    if x0 < 0:
-        x0 = 0
-    elif x0 >= <int> w:
-        x0 = w - 1
-    if x1 < 0:
-        x1 = 0
-    elif x1 >= <int> w:
-        x1 = w - 1
-    if y0 < 0:
-        y0 = 0
-    elif y0 >= <int> h:
-        y0 = h - 1
-    if y1 < 0:
-        y1 = 0
-    elif y1 >= <int> h:
-        y1 = h - 1
 
     cdef unsigned char i_a = image[y0, x0]
     cdef unsigned char i_b = image[y1, x0]
@@ -58,30 +51,23 @@ cdef unsigned char getRectSubPix(const unsigned char[:, ::1] image, const unsign
 @cython.cdivision(True)
 @cython.initializedcheck(False)
 cdef unsigned char getRectSubPix_channel(const unsigned char[:, :, ::1] image, const unsigned int h,
-                                         const unsigned int w, const Py_ssize_t channel, const float x,
-                                         const float y) nogil:
+                                         const unsigned int w, const Py_ssize_t channel, float x,
+                                         float y) nogil:
+    # Clipping
+    if x < 0:
+        x = 0
+    if x >= w - 1:
+        # Go further inward the image to extend the border (doesn't make sense, but it works)
+        x = <float> w - 1.0009765625
+    if y < 0:
+        y = 0
+    if y >= h - 1:
+        y = <float> h - 1.0009765625
+
     cdef int x0 = <int> floor(x)
     cdef int x1 = x0 + 1
     cdef int y0 = <int> floor(y)
     cdef int y1 = y0 + 1
-
-    # Clipping
-    if x0 < 0:
-        x0 = 0
-    elif x0 >= <int> w:
-        x0 = w - 1
-    if x1 < 0:
-        x1 = 0
-    elif x1 >= <int> w:
-        x1 = w - 1
-    if y0 < 0:
-        y0 = 0
-    elif y0 >= <int> h:
-        y0 = h - 1
-    if y1 < 0:
-        y1 = 0
-    elif y1 >= <int> h:
-        y1 = h - 1
 
     cdef unsigned char i_a = image[y0, x0, channel]
     cdef unsigned char i_b = image[y1, x0, channel]
@@ -112,7 +98,6 @@ def unwrap(const unsigned char[:, ::1] image, const unsigned int h, const unsign
                         const unsigned int tread_width, const int cx1, const int cy1, const float a1, const float b1,
                         float theta1, const int cx2, const int cy2, const float a2, const float b2, float theta2,
                         float start, float end):
-
     # Convert to radians
     start = start * 3.141592 / 180.0
     end = end * 3.141592 / 180.0
@@ -156,7 +141,6 @@ def unwrap_multichannel(const unsigned char[:, :, ::1] image, const unsigned int
                         const unsigned int tread_width, const int cx1, const int cy1, const float a1, const float b1,
                         float theta1, const int cx2, const int cy2, const float a2, const float b2, float theta2,
                         float start, float end):
-
     # Convert to radians
     start = start * 3.141592 / 180.0
     end = end * 3.141592 / 180.0
