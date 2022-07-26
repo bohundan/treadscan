@@ -16,7 +16,7 @@ with open('README.md', 'r') as f:
 
 setup(
     name='treadscan',
-    version='1.0.2',
+    version='1.0.3',
     package_dir={'': 'src'},
     packages=find_packages(),
     author='Daniel Bohuněk',
