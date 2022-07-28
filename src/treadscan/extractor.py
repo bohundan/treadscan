@@ -233,6 +233,8 @@ class TireModel:
 
         # Perspective transform
         beta = self.beta_angle
+        if left_oriented:
+            beta *= - 1
 
         center_offset = self.image_size[1] // 2 - int(temp_ellipse.point_on_ellipse(deg=-90)[0])
         top = perspective_transform_y_axis(beta, (top[0] + center_offset, top[1]),
@@ -327,22 +329,18 @@ class TireModel:
             raise RuntimeError('TireModel is not initialized.')
 
         # Find bounding box
-        if self.outer_ellipse.cx < self.inner_ellipse.cx:
-            left_bbox = self.outer_ellipse.bounding_box()
-            right_bbox = self.inner_ellipse.bounding_box()
-        else:
-            left_bbox = self.inner_ellipse.bounding_box()
-            right_bbox = self.outer_ellipse.bounding_box()
-
-        # Extend bounding box to entire tire
-        top_left = left_bbox[0]
-        bottom_right = right_bbox[1][0], left_bbox[1][1]
+        outer = self.outer_ellipse.bounding_box()
+        inner = self.inner_ellipse.bounding_box()
+        leftmost = min(outer[0][0], outer[1][0], inner[0][0], inner[1][0])
+        rightmost = max(outer[0][0], outer[1][0], inner[0][0], inner[1][0])
+        topmost = min(outer[0][1], outer[1][1], inner[0][1], inner[1][1])
+        bottommost = max(outer[0][1], outer[1][1], inner[0][1], inner[1][1])
 
         # Restrict points to within image
-        left = min(self.image_size[1] - 1, max(0, top_left[0]))
-        top = min(self.image_size[0], max(0, top_left[1]))
-        right = max(0, min(self.image_size[1] - 1, bottom_right[0]))
-        bottom = max(0, min(self.image_size[0] - 1, bottom_right[1]))
+        left = min(self.image_size[1] - 1, max(0, leftmost))
+        right = max(0, min(self.image_size[1] - 1, rightmost))
+        top = min(self.image_size[0], max(0, topmost))
+        bottom = max(0, min(self.image_size[0] - 1, bottommost))
 
         return (left, top), (right, bottom)
 
