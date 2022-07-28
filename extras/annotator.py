@@ -309,7 +309,8 @@ class Annotator:
                     # Improve preview by equalizing histogram
                     if len(tread.shape) == 3:
                         tread = cv2.cvtColor(tread, cv2.COLOR_BGR2GRAY)
-                    tread = equalize_grayscale(tread)
+                    tread = remove_gradient(tread)
+                    tread = clahe(tread)
                     tread = cv2.cvtColor(tread, cv2.COLOR_GRAY2BGR)
                 except RuntimeError:
                     tread = None
