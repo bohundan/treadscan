@@ -56,8 +56,14 @@ perspective_transform_y_axis()
 .. autofunction:: treadscan.utilities.perspective_transform_y_axis
 
 
-equalize_grayscale()
+remove_gradient()
 --------------------
 
-.. autofunction:: treadscan.utilities.equalize_grayscale
+.. autofunction:: treadscan.utilities.remove_gradient
+
+
+clahe()
+--------------------
+
+.. autofunction:: treadscan.utilities.clahe
 
