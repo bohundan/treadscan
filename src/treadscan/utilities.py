@@ -690,7 +690,51 @@ def perspective_transform_y_axis(angle: float, point: (int, int), image_size: (i
     return x_, y_
 
 
-def equalize_grayscale(image: np.ndarray, clip_limit: float = 8.0, tile_grid_size: Union[int, tuple] = 4) -> np.ndarray:
+def remove_gradient(image: np.ndarray, blur_kernel_size: (int, int) = (0, 0)) -> np.ndarray:
+    """
+    Attempts to remove effects of (vertical) gradient lighting in image.
+
+    Parameters
+    ----------
+    image : numpy.ndarray
+        Original (grayscale) image.
+
+    blur_kernel_size : (int, int)
+        Optional parameter to change shape of kernel (width, height) used to find gradient. (Horizontal kernels will
+        find vertical gradient and vice-versa.)
+        By default, this method removes vertical gradient.
+
+    Returns
+    -------
+    numpy.ndarray
+        Image without gradient.
+
+    Raises
+    ------
+    ValueError
+        If image is not grayscale or has invalid resolution.
+    """
+
+    if len(image.shape) != 2:
+        raise ValueError('Image is not grayscale.')
+    if image.shape[0] < 2 or image.shape[1] < 2:
+        raise ValueError('Image is less than 2 pixels wide/tall.')
+
+    kernel_width, kernel_height = blur_kernel_size
+    if kernel_width == 0:
+        kernel_width = image.shape[1]
+    if kernel_height == 0:
+        kernel_height = kernel_width // 2
+
+    gradient = cv2.blur(image, (kernel_width, kernel_height))
+
+    no_gradient = image.astype(int) - gradient.astype(int)
+    no_gradient = cv2.normalize(no_gradient, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+
+    return no_gradient
+
+
+def clahe(image: np.ndarray, clip_limit: float = 8.0, tile_grid_size: Union[int, tuple] = 4) -> np.ndarray:
     """
     Contrast limited adaptive histogram equalization (CLAHE).
 
@@ -709,7 +753,7 @@ def equalize_grayscale(image: np.ndarray, clip_limit: float = 8.0, tile_grid_siz
     if isinstance(tile_grid_size, int):
         tile_grid_size = (tile_grid_size, tile_grid_size)
 
-    clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
-    equalized = clahe.apply(image)
+    cv2_clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
+    equalized = cv2_clahe.apply(image)
 
     return equalized
