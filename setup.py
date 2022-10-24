@@ -6,17 +6,13 @@ from distutils.extension import Extension
 from Cython.Build import cythonize
 
 
-os.environ['CFLAGS'] = '-shared -pthread -fPIC -fwrapv -O3 -fno-strict-aliasing -fopenmp -I "/usr/include/python3.8"'
-
-
 with open('README.md', 'r') as f:
     long_description = f.read()
 
 
-
 setup(
     name='treadscan',
-    version='1.0.4',
+    version='1.0.5',
     package_dir={'': 'src'},
     packages=find_packages(),
     author='Daniel Bohuněk',
